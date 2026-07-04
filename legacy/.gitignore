@@ -1,0 +1,19 @@
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# vercel
+.vercel
+
+# misc kept from original root .gitignore
+local-*
+.z-ai-config
+dev.log
+dev.out.log
+server.log
+test
+prompt
