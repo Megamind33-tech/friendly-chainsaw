@@ -42,6 +42,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.12", features = ["json"] }
 base64 = "0.22"
 tauri-plugin-single-instance = "2.4.2"
+# Phase 10 MOS Protocol parser. Chosen over `xml-rs` (whole-DOM allocation
+# per message) because MOS messages arrive frequently on live rundowns and
+# a streaming reader keeps the per-connection allocation bounded. Only the
+# reader is used; the writer stays disabled to keep the surface small.
+quick-xml = { version = "0.36", default-features = false, features = ["serialize"] }
 
 # The PNG decode chain is pathologically slow when built unoptimized: decoding
 # one 1080p CapturePreview frame takes ~2s in a stock dev build vs ~30ms

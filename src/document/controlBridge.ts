@@ -5,6 +5,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useDocStore } from "./store";
 import { usePlayoutStore } from "./playout";
 import type { ControlCommand, ControlStateSnapshot } from "./controlProtocol";
+import {
+  useAutomationStore,
+  evalCondition,
+  shouldTimerFire,
+  type AutomationRule,
+} from "./automation";
 
 /**
  * Phase 7 control bridge — the single point of contact between the
@@ -117,6 +123,35 @@ async function pushSnapshot(): Promise<void> {
   }
 }
 
+/**
+ * Same snapshot data as `buildSnapshot()` but shaped as a flat
+ * `Record<string, unknown>` — matches `evalCondition`'s signature so the
+ * automation engine can look up whitelisted fields by name without
+ * casting the strongly-typed snapshot at every call site.
+ *
+ * Deliberately not a `Object.assign({}, snapshot)` — the snapshot has
+ * nested `recording`/`ndi` objects that get flattened here so a condition
+ * on `ndiStreaming` (a leaf name) is one lookup, not two.
+ */
+function buildSnapshotAsPlainObject(): Record<string, unknown> {
+  const snap = buildSnapshot();
+  return {
+    programSceneId: snap.programSceneId,
+    previewSceneId: snap.previewSceneId,
+    onAir: snap.onAir,
+    currentItemId: snap.currentItemId,
+    currentItemTitle: snap.currentItemTitle,
+    currentItemProgress: snap.currentItemProgress,
+    currentItemDuration: snap.currentItemDuration,
+    isSchedulePlaying: snap.isSchedulePlaying,
+    recordingActive: snap.recording.active,
+    ndiStreaming: snap.ndi.streaming,
+    ndiConnections: snap.ndi.connections,
+    sceneCount: snap.sceneCount,
+    layerCount: snap.layerCount,
+  };
+}
+
 async function dispatchCommand(cmd: ControlCommand): Promise<void> {
   const doc = useDocStore.getState();
   const po = usePlayoutStore.getState();
@@ -186,12 +221,62 @@ export function useControlBridge(): void {
     let scheduled: number | null = null;
     let disposed = false;
 
+    // Previous snapshot values used by the automation engine to detect
+    // transitions (on_take, on_item_start, on_item_end). Deliberately not
+    // stored in the automation store — those are pure engine internals
+    // and shouldn't be persisted or exposed to the UI.
+    let prevProgramSceneId: string | null = null;
+    let prevCurrentItemId: string | null = null;
+
     const requestPush = () => {
       if (disposed || scheduled !== null) return;
       scheduled = scheduleId(() => {
         scheduled = null;
         void pushSnapshot();
+        runAutomationOnTransition();
       });
+    };
+
+    /**
+     * Called on every rAF-coalesced snapshot rebuild. Detects on_take and
+     * on_item_start/end transitions by comparing to the previous snapshot,
+     * fires matching rules, then updates the "previous" trackers.
+     */
+    const runAutomationOnTransition = () => {
+      const snap = buildSnapshotAsPlainObject();
+      const takeFired = prevProgramSceneId !== null && snap.programSceneId !== prevProgramSceneId;
+      const itemStart = prevCurrentItemId !== snap.currentItemId && snap.currentItemId !== null;
+      const itemEnd = prevCurrentItemId !== null && snap.currentItemId !== prevCurrentItemId;
+      // Field types are pinned by AUTOMATION_CONDITION_FIELDS; the plain-
+      // object flattener carries `string | null` for these two.
+      prevProgramSceneId = snap.programSceneId as string | null;
+      prevCurrentItemId = snap.currentItemId as string | null;
+
+      const rules = useAutomationStore.getState().rules;
+      for (const rule of rules) {
+        if (!rule.enabled) continue;
+        let fired = false;
+        if (rule.trigger.kind === "on_take" && takeFired) fired = true;
+        else if (rule.trigger.kind === "on_item_start" && itemStart) fired = true;
+        else if (rule.trigger.kind === "on_item_end" && itemEnd) fired = true;
+        if (!fired) continue;
+        maybeFireRule(rule, snap);
+      }
+    };
+
+    /**
+     * Fires a rule if condition passes and the rate limiter allows.
+     * Delegates the actual action to `dispatchCommand`, which routes
+     * through the same code path as commands from the Rust control server
+     * — meaning automation actions and Companion button presses are
+     * indistinguishable to the rest of the app.
+     */
+    const maybeFireRule = (rule: AutomationRule, snap: Record<string, unknown>): void => {
+      if (rule.condition && !evalCondition(rule.condition, snap)) return;
+      const nowMs = Date.now();
+      const ok = useAutomationStore.getState().recordActionFired(nowMs);
+      if (!ok) return; // master disabled or rate-limited
+      void dispatchCommand({ type: rule.action.type, params: rule.action.params });
     };
 
     // Push an initial snapshot immediately so a Companion connecting right
@@ -201,6 +286,28 @@ export function useControlBridge(): void {
 
     const unsubDoc = useDocStore.subscribe(requestPush);
     const unsubPo = usePlayoutStore.subscribe(requestPush);
+
+    /**
+     * on_timer trigger — fires periodically at each rule's configured
+     * interval. Piggybacks on the existing 1-second status poll (see
+     * `statusInterval` below) so we don't spin a second timer.
+     */
+    const runAutomationTimers = () => {
+      const snap = buildSnapshotAsPlainObject();
+      const nowMs = Date.now();
+      const store = useAutomationStore.getState();
+      for (const rule of store.rules) {
+        if (!rule.enabled) continue;
+        if (rule.trigger.kind !== "on_timer") continue;
+        const lastFire = store.lastTimerFireMs[rule.id];
+        if (!shouldTimerFire(rule.trigger.seconds, lastFire, nowMs)) continue;
+        // Only mark as fired if it actually gets through condition + rate limit.
+        if (rule.condition && !evalCondition(rule.condition, snap)) continue;
+        if (!store.recordActionFired(nowMs)) continue;
+        store.markTimerFired(rule.id, nowMs);
+        void dispatchCommand({ type: rule.action.type, params: rule.action.params });
+      }
+    };
 
     // Poll ndi/record status every second — these live in Rust, not the
     // Zustand stores, so a store subscription can't catch them.
@@ -228,6 +335,7 @@ export function useControlBridge(): void {
         /* ok — startup race */
       }
       requestPush();
+      runAutomationTimers();
     }, 1000);
 
     // Incoming commands from the sidecar's /control/command endpoint.

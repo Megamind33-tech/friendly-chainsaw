@@ -22,6 +22,7 @@ import { OutputStreamingPanel } from "@/components/panels/OutputStreamingPanel";
 import { NdiPanel } from "@/components/panels/NdiPanel";
 import { TimelinePanel } from "@/components/panels/TimelinePanel";
 import { PlayoutPanel } from "@/components/panels/PlayoutPanel";
+import { AutomationPanel } from "@/components/panels/AutomationPanel";
 
 /**
  * Per-workspace dockview config (Phase A reorg). Each entry is one page's
@@ -267,10 +268,15 @@ const timelineConfig: WorkspaceConfig = {
 
 const playoutConfig: WorkspaceConfig = {
   id: "playout",
-  storageKey: "workspace-playout-layout-v1",
+  // Layout key bumped from v1 → v2: adding the Automation panel means any
+  // persisted layout from before it existed would render an empty tab
+  // instead of picking up the new default. Same pattern as Phase 5.7's
+  // scorebug builder layout bump.
+  storageKey: "workspace-playout-layout-v2",
   components: {
     playout: PlayoutPanel,
     monitors: MonitorsPanel,
+    automation: AutomationPanel,
   },
   buildLayout(event) {
     const playout = event.api.addPanel({ id: "playout", component: "playout", title: "Playout" });
@@ -279,6 +285,12 @@ const playoutConfig: WorkspaceConfig = {
       component: "monitors",
       title: "Monitors",
       position: { referencePanel: playout, direction: "below" },
+    });
+    event.api.addPanel({
+      id: "automation",
+      component: "automation",
+      title: "Automation",
+      position: { referencePanel: playout, direction: "right" },
     });
   },
 };
