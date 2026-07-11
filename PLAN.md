@@ -112,7 +112,7 @@ Sport state machines, scorebugs, lower-thirds, ticker, Brand Kit theming across 
 
 **Verification status (2026-07-11):** TypeScript build clean (npm run build ✓), all 8 sports files present and integrated (soccer, basketball, football, baseball, hockey, tennis, volleyball, rugby + common, lowerThirds, fullscreens, squads). Code-review confirms: all scorebugs are data-driven through binding engine, Brand Kit theming implemented with per-sport color override capability, ticker with seamless-marquee scrolling built. GUI click-through (Add Scorebug → render → edit values → Play In/Out) recommended for final verification on Windows.
 
-## Phase 5 — Virtual Set — IN PROGRESS (2026-07-05)
+## Phase 5 — Virtual Set — COMPLETE (2026-07-11)
 
 Port `legacy/src/components/studio/VirtualStudioScene.tsx`'s 6 set geometries and 3-point lighting rig into document-driven, gizmo-editable scenes (as `set3d` layers, already reserved in Phase 1). Real `@react-three/postprocessing` (the old `DepthPanel.tsx` was 100% cosmetic — new build, not a port). This is the standalone 3D broadcast environment engine: no Unreal/Unity/Godot dependency, targeted at small machines (quality knobs down to 0.5× DPR, shadows/bloom off by default) with broadcast-grade output.
 
