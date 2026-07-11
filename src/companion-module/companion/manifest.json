@@ -1,0 +1,24 @@
+{
+  "id": "broadcast-graphics-engine",
+  "name": "broadcast-graphics-engine",
+  "shortname": "BGE",
+  "description": "Bitfocus Companion module for the Broadcast Graphics Engine — control take/cut/rundown/record from a Stream Deck.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": "https://github.com/megamind33-tech/friendly-chainsaw",
+  "bugs": "https://github.com/megamind33-tech/friendly-chainsaw/issues",
+  "maintainers": [
+    {
+      "name": "Broadcast Graphics Engine team"
+    }
+  ],
+  "runtime": {
+    "type": "node22",
+    "api": "nodejs-ipc",
+    "apiVersion": "1.0.0",
+    "entrypoint": "../index.js"
+  },
+  "manufacturer": "Broadcast Graphics Engine",
+  "products": ["Control Room"],
+  "keywords": ["broadcast", "graphics", "playout", "rundown", "sports", "AR"]
+}

@@ -1,5 +1,8 @@
 mod capture;
+mod control_server;
 mod ndi;
+mod record;
+mod spout;
 mod status;
 
 use std::path::PathBuf;
@@ -822,8 +825,23 @@ async fn asset_get_handler(
 /// would reject them.
 const ASSET_BODY_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
-fn spawn_output_server(state: AppState) {
+fn spawn_output_server(state: AppState, control_state: control_server::ControlServerState) {
     tauri::async_runtime::spawn(async move {
+        // The control server has its own state type; mount its routes with
+        // a distinct `with_state` on a sub-router so the shared root router
+        // remains typed on `AppState`.
+        let control_router = axum::Router::new()
+            .route(
+                "/control/command",
+                axum::routing::post(control_server::control_command_handler)
+                    .options(control_server::control_command_preflight),
+            )
+            .route(
+                "/control/state/stream",
+                axum::routing::get(control_server::control_state_stream_handler),
+            )
+            .with_state(control_state);
+
         let router = axum::Router::new()
             .route("/program", axum::routing::get(program_handler))
             .route("/program-static/{*path}", axum::routing::get(program_static_handler))
@@ -842,7 +860,8 @@ fn spawn_output_server(state: AppState) {
                 axum::routing::post(asset_generate_image_handler).options(asset_preflight_handler),
             )
             .route("/assets/{file}", axum::routing::get(asset_get_handler))
-            .with_state(state);
+            .with_state(state)
+            .merge(control_router);
         // Bind with retry: on a dev-watcher or crash restart the previous
         // instance can still hold the port for a few seconds; panicking here
         // (the old behavior) silently left the app running with NO sidecar —
@@ -884,6 +903,43 @@ fn set_program_document(
     // the next window to connect gets the fresh value as its initial frame.
     let _ = broadcast.send(doc);
     Ok(())
+}
+
+/// Phase 7 control-plane state push. Called by the Control Room's
+/// `controlBridge.ts` whenever a control-relevant slice changes (program
+/// scene, on-air lamp, playout current/next item, ndi/record status). The
+/// sidecar mirrors it verbatim into the SSE broadcast + the current-state
+/// buffer for late-joining `/control/state/stream` clients.
+#[tauri::command]
+fn set_control_state(
+    state_json: String,
+    state: tauri::State<control_server::ControlStateBuffer>,
+    broadcast: tauri::State<control_server::ControlStateBroadcast>,
+) -> Result<(), String> {
+    {
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        *guard = state_json.clone();
+    }
+    let _ = broadcast.send(state_json);
+    Ok(())
+}
+
+/// Phase 7 record from the Tauri IPC layer (used by the PlayoutPanel
+/// Record button). The control-server path in control_server.rs calls the
+/// same underlying `record::start_record_from_command`, so a Companion
+/// button and an in-app button behave identically.
+#[tauri::command]
+async fn start_record(
+    filename: Option<String>,
+    codec: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<record::StartRecordResult, String> {
+    record::start_record_from_command(&app, filename, codec).await
+}
+
+#[tauri::command]
+fn stop_record(app: tauri::AppHandle) -> Result<record::StopRecordResult, String> {
+    record::stop_record_from_command(&app)
 }
 
 #[tauri::command]
@@ -1186,9 +1242,20 @@ pub fn run() {
     let ndi: Arc<dyn ndi::NdiOutput> = ndi::create_ndi_output();
     let ndi_streaming = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let ndi_config: NdiConfigState = Arc::new(Mutex::new(NdiOutputConfig::default()));
+    // Phase 7 control-plane state — mirrors what controlBridge.ts publishes,
+    // fanned out to /control/state/stream subscribers.
+    let control_state_buffer: control_server::ControlStateBuffer =
+        Arc::new(Mutex::new("null".to_string()));
+    let (control_tx, _control_rx) = tokio::sync::broadcast::channel::<String>(16);
+    let control_broadcast: control_server::ControlStateBroadcast = Arc::new(control_tx);
+    // Phase 7 FFmpeg record — Arc so both the Tauri state and the
+    // control-server dispatch share the same one-active-record guard.
+    let record_state = record::RecordState::new();
     let server_doc = doc_state.clone();
     let server_broadcast = doc_broadcast.clone();
     let server_ndi = ndi.clone();
+    let server_control_state = control_state_buffer.clone();
+    let server_control_broadcast = control_broadcast.clone();
     // The sender is spawned in `.setup()` (not here) because Program-mode
     // capture needs the "program" WebviewWindow, which doesn't exist until the
     // app is built.
@@ -1214,6 +1281,9 @@ pub fn run() {
         .manage(ndi)
         .manage(ndi_streaming)
         .manage(ndi_config)
+        .manage(control_state_buffer)
+        .manage(control_broadcast)
+        .manage(record_state)
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1222,6 +1292,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             set_program_document,
+            set_control_state,
             get_ndi_status,
             list_ndi_sources,
             start_ndi_output,
@@ -1230,7 +1301,11 @@ pub fn run() {
             generate_ai_image_asset,
             get_ai_settings_status,
             set_openai_api_key,
-            clear_openai_api_key
+            clear_openai_api_key,
+            record::get_record_status,
+            start_record,
+            stop_record,
+            spout::get_spout_status
         ])
         .setup(move |app| {
             // The assets dir needs the app handle to resolve, so AppState is
@@ -1268,14 +1343,21 @@ pub fn run() {
                 sender_config.clone(),
                 app.get_webview_window("program"),
             );
-            spawn_output_server(AppState {
-                doc: server_doc.clone(),
-                doc_broadcast: server_broadcast.clone(),
-                stats: Arc::new(Mutex::new(status::RequestStats::new())),
-                ndi: server_ndi.clone(),
-                assets_dir,
-                frontend_roots,
-            });
+            spawn_output_server(
+                AppState {
+                    doc: server_doc.clone(),
+                    doc_broadcast: server_broadcast.clone(),
+                    stats: Arc::new(Mutex::new(status::RequestStats::new())),
+                    ndi: server_ndi.clone(),
+                    assets_dir,
+                    frontend_roots,
+                },
+                control_server::ControlServerState {
+                    state: server_control_state.clone(),
+                    broadcast: server_control_broadcast.clone(),
+                    app_handle: app.handle().clone(),
+                },
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

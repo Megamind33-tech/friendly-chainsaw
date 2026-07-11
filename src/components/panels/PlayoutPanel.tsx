@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useDocStore } from "@/document/store";
 import {
   usePlayoutStore,
@@ -6,11 +7,15 @@ import {
   fmtTimeOfDay,
   fmtDuration,
   downloadAsRunCsv,
+  buildRundownCsv,
+  buildRundownJson,
+  parseRundownCsv,
+  parseRundownJson,
   PROGRAM_TYPE_LABEL,
   type ProgramType,
   type AsRunStatus,
 } from "@/document/playout";
-import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Clock } from "lucide-react";
+import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Upload, Clock, Circle } from "lucide-react";
 
 const TYPES: ProgramType[] = ["program", "live", "clip", "break", "id", "filler"];
 
@@ -62,13 +67,97 @@ export function PlayoutPanel() {
   const previous = usePlayoutStore((s) => s.previous);
   const takeItem = usePlayoutStore((s) => s.takeItem);
   const clearAsRun = usePlayoutStore((s) => s.clearAsRun);
+  const replaceRundown = usePlayoutStore((s) => s.replaceRundown);
 
   const [tab, setTab] = useState<"rundown" | "asrun">("rundown");
   const [nowClock, setNowClock] = useState(Date.now());
+  const [recording, setRecording] = useState(false);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     const id = setInterval(() => setNowClock(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Phase 7: keep the Record button state honest with the Rust-side status.
+  // Polling (rather than a push) because record starts/stops rarely enough
+  // that the extra latency is imperceptible, and it avoids adding another
+  // Tauri event subscription just for this panel.
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const status = await invoke<{ active: boolean; lastError?: string | null }>("get_record_status");
+        if (!alive) return;
+        setRecording(status.active);
+        if (status.lastError) setRecordError(status.lastError);
+      } catch {
+        /* ok — during startup */
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 1000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const scenesById = project?.scenes ?? [];
+  const sceneNameToId: Record<string, string> = {};
+  const sceneIdToName: Record<string, string> = {};
+  for (const s of scenesById) {
+    sceneNameToId[s.name] = s.id;
+    sceneIdToName[s.id] = s.name;
+  }
+
+  const importFromFile = async (file: File) => {
+    const text = await file.text();
+    let items;
+    try {
+      items = file.name.toLowerCase().endsWith(".json")
+        ? parseRundownJson(text)
+        : parseRundownCsv(text, sceneNameToId);
+    } catch (e) {
+      setRecordError(`import failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    if (items.length === 0) {
+      setRecordError("import: no valid items found");
+      return;
+    }
+    replaceRundown(items);
+  };
+
+  const exportRundown = (fmt: "csv" | "json") => {
+    const text =
+      fmt === "csv" ? buildRundownCsv(items, sceneIdToName) : buildRundownJson(items);
+    const mime = fmt === "csv" ? "text/csv;charset=utf-8" : "application/json";
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.href = url;
+    a.download = `rundown-${stamp}.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const toggleRecord = async () => {
+    setRecordError(null);
+    try {
+      if (recording) {
+        await invoke("stop_record");
+      } else {
+        await invoke("start_record", { filename: null, codec: "h264" });
+      }
+    } catch (e) {
+      setRecordError(String(e));
+    }
+  };
 
   if (!project) {
     return <div className="flex h-full items-center justify-center bg-bg-deepest font-mono text-xs text-text-muted">Loading…</div>;
@@ -123,6 +212,14 @@ export function PlayoutPanel() {
           />
         </label>
 
+        <button
+          onClick={toggleRecord}
+          title={recording ? "Stop recording" : "Start recording"}
+          className={`${ctrlBtn} ${recording ? "border-live-red text-live-red" : ""}`}
+        >
+          <Circle className={`h-3.5 w-3.5 ${recording ? "fill-live-red" : ""}`} />
+        </button>
+
         <div className="ml-auto flex items-center gap-3 font-mono text-[10px] text-text-muted">
           <span>{items.length} items</span>
           <span>runs {fmtDuration(totalDur)}</span>
@@ -130,6 +227,12 @@ export function PlayoutPanel() {
           <span className="tabular-nums text-text-muted-alt">{new Date(nowClock).toLocaleTimeString("en-GB", { hour12: false })}</span>
         </div>
       </div>
+      {recordError && (
+        <div className="shrink-0 border-b border-live-red/50 bg-live-red/10 px-2 py-1 font-mono text-[10px] text-live-red">
+          {recordError}
+          <button className="ml-2 underline" onClick={() => setRecordError(null)}>dismiss</button>
+        </div>
+      )}
 
       {/* Now / Next */}
       <div className="grid shrink-0 grid-cols-2 gap-2 border-b border-border-subtle bg-bg-base px-2 py-2">
@@ -199,9 +302,45 @@ export function PlayoutPanel() {
           </button>
         ))}
         {tab === "rundown" && (
-          <button onClick={() => addProgram()} className="ml-auto flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono text-[10px] text-text-muted-alt hover:border-accent-blue">
-            <Plus className="h-3 w-3" /> Program
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.json,text/csv,application/json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importFromFile(f);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              title="Import rundown from CSV or JSON (replaces current items)"
+              className="flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono text-[10px] text-text-muted-alt hover:border-accent-blue"
+            >
+              <Upload className="h-3 w-3" /> Import
+            </button>
+            <button
+              disabled={items.length === 0}
+              onClick={() => exportRundown("csv")}
+              title="Export rundown as CSV"
+              className="flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono text-[10px] text-text-muted-alt hover:border-accent-blue disabled:opacity-30"
+            >
+              <Download className="h-3 w-3" /> CSV
+            </button>
+            <button
+              disabled={items.length === 0}
+              onClick={() => exportRundown("json")}
+              title="Export rundown as JSON"
+              className="flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono text-[10px] text-text-muted-alt hover:border-accent-blue disabled:opacity-30"
+            >
+              <Download className="h-3 w-3" /> JSON
+            </button>
+            <button onClick={() => addProgram()} className="flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-1 font-mono text-[10px] text-text-muted-alt hover:border-accent-blue">
+              <Plus className="h-3 w-3" /> Program
+            </button>
+          </div>
         )}
         {tab === "asrun" && (
           <div className="ml-auto flex items-center gap-1">
