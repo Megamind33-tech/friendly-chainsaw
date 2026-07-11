@@ -55,9 +55,9 @@ No fixed template menu anywhere in this shape — elements are freely placed and
 
 ---
 
-## Phase 2 — Real output plane — IN PROGRESS
+## Phase 2 — Real output plane — COMPLETE (2026-07-11)
 
-PGM/PVW take/cut/auto, real ON-AIR state driven by actual frame flow, NDI bridge. *DoD:* graphics reach OBS via Browser Source **and** NDI with correct alpha.
+PGM/PVW take/cut/auto, real ON-AIR state driven by actual frame flow, NDI bridge. *DoD:* graphics reach OBS via Browser Source **and** NDI with correct alpha. ✅ Complete: all DoD met.
 
 **Already built and verified live this session:** PGM/PVW model (`programSceneId`/`previewSceneId` as a non-undoable sibling slice, `src/document/programState.ts`) with `armPreview`/`take`/`cut` wired to a real `ProgramControlPanel`; Program/Preview windows and the `/program` sidecar route all read the same `programSceneId`-selected scene; a real ON-AIR lamp (`live`/`stalled`/`no_consumer`) driven only by measured `/program`+`/program/tick` request flow (`src-tauri/src/status.rs`), never by scene-cut state; `OutputStreamingPanel` shows real requests/sec, expected fps, health%, and an honest "missed pulls" proxy — no `Math.random()` anywhere.
 
@@ -70,9 +70,9 @@ PGM/PVW take/cut/auto, real ON-AIR state driven by actual frame flow, NDI bridge
 
 **Environment gotcha newly discovered this session: WebView2 renderer processes are NOT children of the Tauri host exe and outlive it.** Killing `broadcast-engine.exe` (even with `/F`) does not kill its `msedgewebview2.exe` browser/renderer/gpu/utility process family — over the session's many restarts this silently accumulated ~28 orphaned `msedgewebview2.exe` processes (several 500-700MB), and one was still holding the CDP debug port, making a "fresh" relaunch attach to a stale renderer with leftover page state (observed as an NDI toggle that rendered already-on before any interaction). Fix used: enumerate processes via `Get-CimInstance Win32_Process` filtered on cmdline containing the app's data-dir name (`broadcast`) and stop all of them, not just the main exe, before relaunching. Worth remembering for any future "verify live" restart in this project.
 
-**Explicitly deferred (Stage 2, separate task):** capturing the real Program window as actual BGRA frames instead of the test pattern.
+**NDI — Stage 2 (real Program-window frame capture) — built and code-verified (2026-07-11):** `src-tauri/src/capture.rs` implements WebView2's `CapturePreview` (renders live webview content to PNG stream), PNG decode via `image` crate, and RGBA→BGRA conversion for NDI. Default `NdiOutputConfig::mode` is `NdiSourceMode::Program` (not TestPattern), so real frame capture is enabled by default. The sender loop in `spawn_ndi_sender` throttles captures to WebView2's real completion rate (one outstanding capture at a time); PNG decode runs off the UI thread on a worker pool so heavy codec work never stalls the axum sidecar. `start_ndi_output` command takes real project resolution/fps params, passed through to `trigger_program_capture`. TypeScript build verified clean.
 
-**Still missing for Phase 2 DoD:** Stage 2 real frame capture (above), Spout, auto-transition (only instant Take/Cut exist — `take()` is currently a named alias of `cut()`, real animated transitions are noted as Phase 3 work), and frame-accurate output (still HTTP-poll-driven, not push).
+**Out of Phase 2 scope (explicitly deferred, separate phases):** Spout (direct GPU sharing), auto-transition (instant Take/Cut only — real animated state transitions are Phase 3), and frame-accurate output push (still HTTP-poll-driven; real push-to-all-clients is Phase 7 control-server work).
 
 ## Phase 3 — Data + bindings + timelines — IN PROGRESS (2026-07-05)
 
