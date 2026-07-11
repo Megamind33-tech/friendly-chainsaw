@@ -1286,6 +1286,11 @@ pub fn run() {
         .manage(control_state_buffer)
         .manage(control_broadcast)
         .manage(record_state)
+        // Phase 10.1: shared handle to the running MOS TCP listener.
+        // maybe_start_mos_server (called in .setup()) may populate this
+        // if settings.enabled = true; the restart_mos_server command
+        // swaps it atomically.
+        .manage::<mos::MosServerState>(std::sync::Arc::new(std::sync::Mutex::new(None)))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1315,7 +1320,8 @@ pub fn run() {
             rundowncloud::fetch_rundowncloud_rundown,
             rundowncloud::fetch_rundowncloud_cues,
             mos::get_mos_status,
-            mos::set_mos_config
+            mos::set_mos_config,
+            mos::restart_mos_server
         ])
         .setup(move |app| {
             // The assets dir needs the app handle to resolve, so AppState is
@@ -1359,7 +1365,7 @@ pub fn run() {
                     doc_broadcast: server_broadcast.clone(),
                     stats: Arc::new(Mutex::new(status::RequestStats::new())),
                     ndi: server_ndi.clone(),
-                    assets_dir,
+                    assets_dir: assets_dir.clone(),
                     frontend_roots,
                 },
                 control_server::ControlServerState {
@@ -1368,6 +1374,11 @@ pub fn run() {
                     app_handle: app.handle().clone(),
                 },
             );
+            // Phase 10.1: start the MOS TCP listener if the persisted
+            // settings say enabled. A bind failure or missing settings
+            // silently leaves it off — visible in the panel.
+            let mos_state = app.state::<mos::MosServerState>().inner().clone();
+            mos::maybe_start_mos_server(app.handle().clone(), &assets_dir, mos_state);
             Ok(())
         })
         .run(tauri::generate_context!())

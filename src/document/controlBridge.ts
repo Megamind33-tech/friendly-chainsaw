@@ -3,7 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { useDocStore } from "./store";
-import { usePlayoutStore } from "./playout";
+import {
+  usePlayoutStore,
+  mapMosStoryToItem,
+  applyMosStoryDelete,
+  applyMosStoryInsert,
+  applyMosStoryMove,
+  applyMosStorySend,
+  type MosStoryLike,
+} from "./playout";
 import type { ControlCommand, ControlStateSnapshot } from "./controlProtocol";
 import {
   useAutomationStore,
@@ -265,18 +273,28 @@ export function useControlBridge(): void {
     };
 
     /**
-     * Fires a rule if condition passes and the rate limiter allows.
-     * Delegates the actual action to `dispatchCommand`, which routes
-     * through the same code path as commands from the Rust control server
-     * — meaning automation actions and Companion button presses are
-     * indistinguishable to the rest of the app.
+     * Fires a rule's action list if the condition passes. Each action
+     * counts separately against the rolling rate limiter, per the Phase
+     * 10.1 accounting design — a 3-action rule firing at 3/sec is 9
+     * actions/sec, which is exactly the thing the limiter exists to
+     * catch. Actions inside a rule dispatch in order; a rate-limit trip
+     * mid-rule silently drops the rest (surfaces as the standard
+     * rateLimited banner).
      */
-    const maybeFireRule = (rule: AutomationRule, snap: Record<string, unknown>): void => {
+    const fireRuleActions = (
+      rule: AutomationRule,
+      snap: Record<string, unknown>,
+      nowMs: number,
+    ): void => {
       if (rule.condition && !evalCondition(rule.condition, snap)) return;
-      const nowMs = Date.now();
-      const ok = useAutomationStore.getState().recordActionFired(nowMs);
-      if (!ok) return; // master disabled or rate-limited
-      void dispatchCommand({ type: rule.action.type, params: rule.action.params });
+      for (const action of rule.actions) {
+        const ok = useAutomationStore.getState().recordActionFired(nowMs);
+        if (!ok) return;
+        void dispatchCommand({ type: action.type, params: action.params });
+      }
+    };
+    const maybeFireRule = (rule: AutomationRule, snap: Record<string, unknown>): void => {
+      fireRuleActions(rule, snap, Date.now());
     };
 
     // Push an initial snapshot immediately so a Companion connecting right
@@ -301,11 +319,14 @@ export function useControlBridge(): void {
         if (rule.trigger.kind !== "on_timer") continue;
         const lastFire = store.lastTimerFireMs[rule.id];
         if (!shouldTimerFire(rule.trigger.seconds, lastFire, nowMs)) continue;
-        // Only mark as fired if it actually gets through condition + rate limit.
-        if (rule.condition && !evalCondition(rule.condition, snap)) continue;
-        if (!store.recordActionFired(nowMs)) continue;
+        // Fire actions through the shared helper so multi-action rules
+        // + rate-limit accounting work identically to on_take/on_item*.
+        // markTimerFired unconditionally, so a rule with a false
+        // condition still ticks its next-fire clock forward instead of
+        // spamming the check every 1s poll — matches the "seconds since
+        // last attempt" mental model an operator has.
         store.markTimerFired(rule.id, nowMs);
-        void dispatchCommand({ type: rule.action.type, params: rule.action.params });
+        fireRuleActions(rule, snap, nowMs);
       }
     };
 
@@ -354,6 +375,95 @@ export function useControlBridge(): void {
         /* mounting outside Tauri (e.g. a browser dev preview) — no-op */
       });
 
+    // Phase 10.1 — MOS message events from the Rust listener. `role` is
+    // the message-type discriminant; `data` is the full parsed message
+    // payload matching the `MosMessage` enum's camelCase serde shape.
+    let unlistenMos: UnlistenFn | null = null;
+    listen<MosMessageEvent>("mos:message", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
+      applyMosMessage(payload);
+      dispatchMosAutomation(payload);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlistenMos = fn;
+      })
+      .catch(() => {
+        /* ok — not running in Tauri */
+      });
+
+    /**
+     * Route a MOS message into `usePlayoutStore` mutations. Uses the
+     * existing `replaceRundown` action so Phase 7's ghost-currentId
+     * guard fires when a rundown-scale change lands.
+     */
+    const applyMosMessage = (event: MosMessageEvent) => {
+      const po = usePlayoutStore.getState();
+      switch (event.role) {
+        case "roCreate": {
+          const stories = (event.data?.stories as MosStoryLike[] | undefined) ?? [];
+          if (stories.length > 0) {
+            po.replaceRundown(stories.map(mapMosStoryToItem));
+          }
+          break;
+        }
+        case "roStorySend": {
+          const story = (event.data?.story as MosStoryLike | undefined) ?? null;
+          if (story) po.replaceRundown(applyMosStorySend(po.items, story));
+          break;
+        }
+        case "roStoryDelete": {
+          const ids = (event.data?.storyIds as string[] | undefined) ?? [];
+          if (ids.length > 0) po.replaceRundown(applyMosStoryDelete(po.items, ids));
+          break;
+        }
+        case "roStoryInsert": {
+          const stories = (event.data?.stories as MosStoryLike[] | undefined) ?? [];
+          const targetId = (event.data?.targetId as string | null | undefined) ?? null;
+          if (stories.length > 0) {
+            po.replaceRundown(applyMosStoryInsert(po.items, stories, targetId));
+          }
+          break;
+        }
+        case "roStoryMove": {
+          const ids = (event.data?.storyIds as string[] | undefined) ?? [];
+          const targetId = (event.data?.targetId as string | null | undefined) ?? null;
+          if (ids.length > 0) po.replaceRundown(applyMosStoryMove(po.items, ids, targetId));
+          break;
+        }
+        case "roDelete":
+          po.replaceRundown([]);
+          break;
+        default:
+          // heartbeat / mosID / unhandled — no rundown state change.
+          break;
+      }
+    };
+
+    /**
+     * Fire any automation rule with an `on_mos_message` trigger that
+     * matches this event. `roleFilter` is optional; empty/absent → any
+     * MOS message. Adds two synthetic fields (`mosRole`, `mosRoId`) to
+     * the snapshot so a condition can gate on which rundown changed.
+     */
+    const dispatchMosAutomation = (event: MosMessageEvent) => {
+      const rules = useAutomationStore.getState().rules;
+      const augmentedSnapshot = {
+        ...buildSnapshotAsPlainObject(),
+        mosRole: event.role,
+        mosRoId: event.roId ?? "",
+      };
+      const nowMs = Date.now();
+      for (const rule of rules) {
+        if (!rule.enabled) continue;
+        if (rule.trigger.kind !== "on_mos_message") continue;
+        const filter = rule.trigger.roleFilter?.trim();
+        if (filter && filter !== event.role) continue;
+        fireRuleActions(rule, augmentedSnapshot, nowMs);
+      }
+    };
+
     return () => {
       disposed = true;
       if (scheduled !== null) cancelScheduleId(scheduled);
@@ -361,6 +471,21 @@ export function useControlBridge(): void {
       unsubDoc();
       unsubPo();
       if (unlisten) unlisten();
+      if (unlistenMos) unlistenMos();
     };
   }, []);
+}
+
+/**
+ * Payload shape emitted by src-tauri/src/mos.rs's `MosMessageEvent`. Kept
+ * in this file (not exported from a separate module) because it's the
+ * only consumer — the Rust side is the sole producer and the shape is
+ * documented in docs/PHASE10_1_DESIGN.md.
+ */
+interface MosMessageEvent {
+  role: string;
+  messageId: string;
+  roId?: string | null;
+  /** Full parsed message; shape depends on role. */
+  data?: Record<string, unknown>;
 }

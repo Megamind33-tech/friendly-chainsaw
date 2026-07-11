@@ -313,6 +313,21 @@ export function PlayoutPanel() {
     }
   };
 
+  const mosRestart = async () => {
+    setMosError(null);
+    try {
+      const running = await invoke<boolean>("restart_mos_server");
+      // Refresh status so the "listening" chip reflects reality.
+      const s = await getMosStatus();
+      setMosStatus(s);
+      if (!running && s.enabled) {
+        setMosError("server did not start — check port availability and system firewall");
+      }
+    } catch (e) {
+      setMosError(String(e));
+    }
+  };
+
   if (!project) {
     return <div className="flex h-full items-center justify-center bg-bg-deepest font-mono text-xs text-text-muted">Loading…</div>;
   }
@@ -472,8 +487,15 @@ export function PlayoutPanel() {
                 <span className="text-text-muted">← ncs {mosStatus.expectedNcsId}</span>
               )}
               <button
-                onClick={() => setMosConfigOpen(true)}
+                onClick={mosRestart}
                 className="ml-auto rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue"
+                title="Restart the MOS TCP listener with the current settings"
+              >
+                Restart server
+              </button>
+              <button
+                onClick={() => setMosConfigOpen(true)}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue"
               >
                 Configure
               </button>

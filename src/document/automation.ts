@@ -26,6 +26,7 @@ export const AUTOMATION_TRIGGER_KINDS = [
   "on_item_start",
   "on_item_end",
   "on_timer",
+  "on_mos_message",
 ] as const;
 
 export type AutomationTriggerKind = (typeof AUTOMATION_TRIGGER_KINDS)[number];
@@ -34,7 +35,13 @@ export type AutomationTrigger =
   | { kind: "on_take" }
   | { kind: "on_item_start" }
   | { kind: "on_item_end" }
-  | { kind: "on_timer"; seconds: number };
+  | { kind: "on_timer"; seconds: number }
+  /**
+   * Phase 10.1 — fires when an NRCS pushes a MOS message through the
+   * TCP listener. `roleFilter` restricts the rule to one message type
+   * (`"roCreate"`, `"roStorySend"`, etc.); empty/absent matches any.
+   */
+  | { kind: "on_mos_message"; roleFilter?: string };
 
 export const AUTOMATION_COMPARISON_OPS = ["==", "!=", ">", "<", ">=", "<="] as const;
 export type AutomationComparisonOp = (typeof AUTOMATION_COMPARISON_OPS)[number];
@@ -59,6 +66,10 @@ export const AUTOMATION_CONDITION_FIELDS = [
   "layerCount",
   "currentItemProgress",
   "currentItemDuration",
+  // Phase 10.1 — synthetic fields available inside an on_mos_message
+  // handler's condition. Empty string outside a MOS event.
+  "mosRole",
+  "mosRoId",
 ] as const;
 
 export type AutomationConditionField = (typeof AUTOMATION_CONDITION_FIELDS)[number];
@@ -80,7 +91,13 @@ export interface AutomationRule {
   enabled: boolean;
   trigger: AutomationTrigger;
   condition?: AutomationCondition;
-  action: AutomationAction;
+  /**
+   * Phase 10.1 — was `action: AutomationAction` in v1. v1 persisted rules
+   * are migrated in-memory on load (see `loadPersisted`). Rate limiting
+   * counts each entry here separately: a 3-action rule firing at 3/sec
+   * costs 9 against the 10/sec cap.
+   */
+  actions: AutomationAction[];
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +114,13 @@ export function validateRule(rule: AutomationRule): void {
       throw new Error("timer trigger requires seconds >= 1");
     }
   }
-  if (!CONTROL_COMMAND_TYPES.includes(rule.action.type)) {
-    throw new Error(`unknown action type: ${rule.action.type}`);
+  if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
+    throw new Error("rule must have at least one action");
+  }
+  for (const a of rule.actions) {
+    if (!CONTROL_COMMAND_TYPES.includes(a.type)) {
+      throw new Error(`unknown action type: ${a.type}`);
+    }
   }
   if (rule.condition) {
     if (!AUTOMATION_CONDITION_FIELDS.includes(rule.condition.field)) {
@@ -192,14 +214,42 @@ interface AutomationState {
   markTimerFired: (ruleId: string, nowMs: number) => void;
 }
 
+/**
+ * Phase 10.1 — in-memory v1→v2 migration. v1 rules had a single
+ * `action: AutomationAction`; v2 uses `actions: AutomationAction[]`.
+ * Migration is not destructive on load (writes back on the next save).
+ */
+export function migrateRule(raw: unknown): AutomationRule | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const actions = Array.isArray(r.actions)
+    ? (r.actions as AutomationAction[])
+    : r.action && typeof r.action === "object"
+      ? [r.action as AutomationAction]
+      : [];
+  if (typeof r.id !== "string" || typeof r.name !== "string" || !r.trigger) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    enabled: Boolean(r.enabled),
+    trigger: r.trigger as AutomationTrigger,
+    condition: r.condition as AutomationCondition | undefined,
+    actions,
+  };
+}
+
 function loadPersisted(): { rules: AutomationRule[]; masterEnabled: boolean } {
   if (typeof window === "undefined") return { rules: [], masterEnabled: true };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { rules: [], masterEnabled: true };
     const p = JSON.parse(raw);
+    const rawRules: unknown[] = Array.isArray(p.rules) ? p.rules : [];
+    const rules = rawRules
+      .map(migrateRule)
+      .filter((r): r is AutomationRule => r !== null && r.actions.length > 0);
     return {
-      rules: Array.isArray(p.rules) ? p.rules : [],
+      rules,
       masterEnabled: p.masterEnabled !== false,
     };
   } catch {

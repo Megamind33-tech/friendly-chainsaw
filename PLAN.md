@@ -492,6 +492,43 @@ Two independent Stage 1 deliverables in one PR: **MOS Protocol 2.8.5 subset** (r
 
 **Explicitly deferred (Stage 2):** MOS TCP server spawn (parser + config are here; spawner is the only remaining piece); MOS outbound status reporting (`roReq`, `roStorySchedule`); bidirectional `mosObj*` asset sync; automation multi-action rules (do 3 things when a trigger fires); composable conditions (AND/OR chains); MOS-message trigger source for automation (`on_mos_message`) — composes naturally once both are landed, deferred because operator use cases aren't clear yet.
 
+## Phase 10.1 — MOS TCP listener + automation composability — COMPLETE (2026-07-11)
+
+Closes both open loops from Phase 10: **the MOS Stage 2 TCP server** so a real NRCS can push a rundown into BGE, and **automation composability** (multi-action rules + `on_mos_message` trigger) so the two Phase 10 features actually compose. Design in [`docs/PHASE10_1_DESIGN.md`](docs/PHASE10_1_DESIGN.md).
+
+**MOS TCP listener (`src-tauri/src/mos.rs`, ~270 new lines):** tokio TCP listener spawns at Tauri `.setup()` time driven by persisted `mos_settings.json`'s `enabled` flag. Per connection: null-terminated-frame reader over `AsyncReadExt` with a 128 KB frame guard against a malformed message that never terminates; each frame parses through `parse_mos_message`; heartbeats ACK inline via `build_heartbeat_ack` (real MOS-wire `\x00` terminator, matching messageID); mosID handshake rejects connections whose `ncs_id` doesn't match the operator-configured `expected_ncs_id` (defense against accidental cross-connect to the wrong newsroom). Non-heartbeat messages emit a `mos:message` Tauri event with a `MosMessageEvent { role, message_id, ro_id, data }` payload for the Control Room. Two live rate/count caps: max 100 messages/sec per connection (rolling-window primitive matching the automation engine's), max 4 concurrent connections (a MOS listener isn't a public service). Live-config swap is via a new `restart_mos_server` Tauri command — the operator saves settings, clicks "Restart server" in the MOS strip; the accept-loop's `Notify` fires, all live connections drop cleanly, and a new listener spawns with the new config. Deliberate: hot-reload without an operator-visible action would rebind a port mid-broadcast.
+
+**JS-side MOS consumer (`controlBridge.ts`):** `listen("mos:message", ...)` routes every parsed message into `usePlayoutStore` mutations via new pure helpers in `playout.ts`: `applyMosStoryDelete`, `applyMosStoryInsert` (target-id-aware — inserts before target or appends), `applyMosStoryMove` (moved items land in the ORDER specified by the wire, not their original position — matches MOS 2.8.5 spec semantics; a subtle bug my first implementation had, caught by verify-phase10_1), `applyMosStorySend` (updates by externalId, or adds if new). `roDelete` clears the entire rundown. All operations go through `replaceRundown` so Phase 7's ghost-`currentId` guard still fires on rundown-scale changes. `ProgramItem` gains a discriminated `externalId?: string` field (`mos:STORY01`, scoped so a future Rundown Studio externalId can coexist without collision) — persisted verbatim in localStorage, unaffected by CSV export.
+
+**Automation composability (`automation.ts`):** `AutomationRule.action` → `AutomationRule.actions: AutomationAction[]` (breaking shape change with a real backward-compat path). `migrateRule()` promotes v1 `{action: X}` blobs to v2 `{actions: [X]}` on load; localStorage key stays `automation-rules-v1` (in-memory migration, persists as v2 on next save). Rate limiter accounting is **per action, not per rule** — a 3-action rule firing at 3/sec is 9 actions/sec against the 10/sec cap, which is exactly the runaway-rule shape the limiter exists to catch. New trigger kind `{ kind: "on_mos_message", roleFilter?: string }`: fires when the Rust listener emits a `mos:message` event; optional `roleFilter` restricts to one MOS message type (`"roCreate"`, `"roStorySend"`, etc.). Condition-field whitelist extends with two synthetic fields — `mosRole` and `mosRoId` — so a rule can gate on which rundown just changed:
+
+```
+trigger: on_mos_message with roleFilter="roCreate"
+condition: mosRoId == "RO001"
+actions: [ take, startRecord ]
+```
+
+**AutomationPanel gains a multi-action editor:** action list with per-action type dropdown + JSON params textarea + remove button (disabled when the rule has exactly one action — enforced by `validateRule`'s "must have at least one action" check). Trigger dropdown now includes `on_mos_message` with a role-filter input beside it. PlayoutPanel's MOS strip gains a **Restart server** button; the config dialog's Save button surfaces "server did not start" as an inline error when the port is already bound or blocked.
+
+**Verified (2026-07-11):**
+- `bunx tsc --noEmit` exit 0
+- `bun run build` succeeds (20s)
+- `bun run scripts/verify-phase10_1.ts` — **27/27 pass** covering MOS story mapping (slug/title fallback, duration defaults, non-positive-clamp guard), all 4 mutation ops (delete/insert-with-and-without-target/move-preserving-wire-order/send), multi-action validation (empty-rejected/unknown-in-array-rejected), on_mos_message trigger + condition-field whitelist, v1→v2 migration (single-action promotion, v2 preserved, non-object rejected), multi-action rate accounting (a 3-action rule at 4 fires trips the cap correctly)
+- All previous verify scripts still pass (verify-phase10 shape updated for multi-action)
+- `cargo test --lib` — **30/30 pass** (parser unchanged from Phase 10 — Rust unit tests still exercise the same synthetic XML samples; the TCP listener path is exercised end-to-end via the JS mutation ops)
+- CI extended to run verify-phase10_1
+
+**Two real bugs caught by verification writing:**
+1. `applyMosStoryMove` originally preserved *original* order for the moved items, not the *wire order* specified in the message. MOS 2.8.5 spec says the message ordering is the operator's intent. Fixed.
+2. Zero/negative `durationSec` originally clamped to 1s (matching the Rundown Studio Phase 9 policy). But MOS's `<storyDuration>` is genuinely optional — 0 or absent both mean "unknown". Fixed to fall back to the 30s default the Rust parser uses when absent. Two different systems, two different valid interpretations, documented inline.
+
+**Not verified:** live NRCS interop (still needs iNews/ENPS/Octopus); live TCP listener under real network conditions. Recommend an operator pass — configure MOS, click Restart, run `nc localhost 10540 < roCreate_sample.xml` from a shell, watch items appear in the rundown tab.
+
+**Explicit deferrals (Phase 10.2):**
+- MOS outbound: BGE-to-NCS `roReq` / `roStorySchedule` (BGE reports status back).
+- MOS `mosObj*` asset sync (still separate).
+- Composable conditions (AND/OR chains) — multi-action gives operators the most-common ask; complex conditions can wait for a real use case.
+
 ## Phase 11+ — Spout/Syphon, signed installers, live profiling
 
 ---
