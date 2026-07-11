@@ -420,7 +420,31 @@ Rust control server, Bitfocus Companion module, rundown runner (import/export), 
 
 ## Phase 8 — Hardening
 
-1080p60 zero-drop performance, packaging, signed Windows installer.
+## Phase 8 — Hardening — IN PROGRESS (2026-07-11)
+
+1080p60 zero-drop performance, packaging, signed Windows installer. This pass delivers the honest cut of Phase 8 that's *end-to-end verifiable from this Linux environment*: automated CI, cross-platform bundle configuration, and expanded verification harness. Real Spout/Syphon + Windows-signed installer + live 1080p60 profiling are documented deferrals — they need Windows/broadcast-rig sessions to ship honestly. Design in [`docs/PHASE8_DESIGN.md`](docs/PHASE8_DESIGN.md).
+
+**Automated CI (`.github/workflows/ci.yml`) — the "no more silent regressions" guard rail.** Two parallel jobs on every push and PR: `verify-frontend` runs `bun install --frozen-lockfile → bunx tsc --noEmit → bun run build → bun run scripts/verify-phase7.ts → bun run scripts/verify-phase8.ts`, and `verify-rust` installs the exact Ubuntu 24.04 GTK/WebKit dev packages that Phase 7 verification identified as needed (this session hit and fixed the `gdk-3.0.pc not found` failure live) and runs `cargo check --tests + cargo test --lib`. Bun and cargo caches keyed by lockfile hash so warm CI is fast. Concurrency-cancelled per branch so stale runs don't block feedback. Deliberate omissions documented: no Windows/macOS bundle build in CI (a broken bundle config fails `tauri build` locally before push), no ESLint (project doesn't have one, and adding one is a project-shape decision not hardening), no coverage numbers (they invite gaming on this project's mix of pure transforms + Konva rendering).
+
+**Tauri bundle config (`src-tauri/tauri.conf.json`) — full cross-platform installer metadata.** Publisher, homepage, category, copyright, short + long descriptions land in every platform's installer chrome and its "Programs and Features"/"Applications" listing. Windows: `wix.upgradeCode` is a fixed UUID so future installers replace-in-place (never side-install a second copy — a real broadcast-rig operator pain if you get this wrong), `nsis.installMode: "perMachine"` (broadcast rigs are shared, not per-user), `digestAlgorithm: sha256` + `timestampUrl` populated so signed installers timestamp correctly, `certificateThumbprint` env-driven so a real signing cert is attached at build time without a secret ever touching the repo. macOS: `minimumSystemVersion: "11.0"` (Big Sur — the oldest with Metal-first WebView), `signingIdentity` env-driven. Linux: `deb.depends` pins `libgtk-3-0t64 | libgtk-3-0`, `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1` — package names verified against Ubuntu 24.04 (the runtime that this session's `cargo check` actually validated against, not guessed). AppImage bundles its own deps so no pins needed there.
+
+**Verification harness expansion (`scripts/verify-phase8.ts`, 20 tests all passing) — pins the invariants Phase 7 shipped but only sanity-tested:**
+- **Control protocol wire contract:** `ControlCommand` and `ControlStateSnapshot` round-trip through `JSON.stringify → JSON.parse` without field loss. Catches the schema-drift regression pattern this project's prior audits (Phase 2, Phase 3) explicitly flagged.
+- **Playout HOLD semantics for live items:** `endStatusFor` (freshly exported for this test) is proven correct at t=0, mid-item, at planned end, AND at 2× planned duration — the operator-visible property that a live-camera take *never* registers as a cut in the as-run log. If this ever regresses to `"cut"`, it lies in the compliance/billing export.
+- **`projectedStartSecs` math with wraparound:** stacking + midnight-crossing (23:30 + 3600s → 00:30 next day) + exact-midnight (23:30 + 1800s → 00:00). One real bug caught in this session: my first test data was wrong (23:30 + 1800 = 00:00, not 00:30), the test failed exactly as it should, then I corrected the test — real signal, not typo.
+- **Sport-schema binding integrity, all 8 sports:** every scorebug is a `gfx2d` layer with bindings covering the mandatory floor from `CONVENTIONS.md` (`<sport>.homeTeam`/`awayTeam`/`homeScore`/`awayScore`/`clock`/`period`). Any of the 8 losing a floor binding is instant test failure.
+- **Rundown CSV/JSON 3-hop idempotence:** import → export → import → export, verify the second CSV text equals the first, verify meaningful fields (title/type/duration/sceneId) are stable through JSON hops too.
+
+**Rust unit tests expanded** (17/17 total passing across `record`/`control_server`/`ndi`/`status`): `known_commands_contains_every_documented_command` pins the wire vocabulary against the design doc so a rename would fail CI; `is_rust_command_covers_rust_side_dispatch` + `is_rust_command_rejects_js_side_commands` pin the routing invariant that mutation commands route through the JS bridge (never inline in Rust — otherwise the Zustand store never reflects the change).
+
+**Verified (2026-07-11):** `bunx tsc --noEmit` exit 0; `bun run build` succeeds (19s); `bun run scripts/verify-phase7.ts` PASS; `bun run scripts/verify-phase8.ts` PASS (all 20 assertions); `cargo test --lib` PASS (17/17); tauri.conf.json parses as valid JSON. The CI workflow itself will run for the first time on the PR that lands it.
+
+**Explicitly deferred (need Windows/broadcast-rig sessions):**
+- Real Spout/Syphon dynamic-load (`spout.rs` stays the honest-unavailable stub from Phase 7; NDI Stage 1's pattern is proven and this ports mechanically when a Windows session is available).
+- Signed installers (config is here; attaching a cert is one flag at build time).
+- Live 1080p60 profiling (needs a running Windows rig to profile against — Phase 2's frame-decode tuning was justified by real measurements, not guesses).
+
+## Phase 9+ — Post-hardening feature work
 
 ---
 
