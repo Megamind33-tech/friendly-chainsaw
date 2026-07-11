@@ -1,4 +1,5 @@
 import { useWorkspaceStore } from "@/document/workspace";
+import { useControlBridge } from "@/document/controlBridge";
 import { PersistentShell } from "@/components/shell/PersistentShell";
 import { WorkspaceDockview } from "@/components/workspaces/WorkspaceDockview";
 import { DOCKVIEW_WORKSPACES } from "@/components/workspaces/workspaces";
@@ -15,6 +16,12 @@ import { DOCKVIEW_WORKSPACES } from "@/components/workspaces/workspaces";
 export default function ControlRoomView() {
   const active = useWorkspaceStore((s) => s.active);
   const config = DOCKVIEW_WORKSPACES[active] ?? DOCKVIEW_WORKSPACES.design;
+
+  // Phase 7: publish this window's control state to the sidecar (fanned
+  // to /control/state/stream) and dispatch incoming /control/command
+  // events onto the local Zustand stores. Runs only here, so Program /
+  // Preview windows never double-emit.
+  useControlBridge();
 
   return (
     <div className="flex h-screen w-screen flex-col bg-bg-deepest">

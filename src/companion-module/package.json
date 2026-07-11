@@ -1,0 +1,20 @@
+{
+  "name": "companion-module-broadcast-graphics-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "Bitfocus Companion module for the Broadcast Graphics Engine",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "package": "companion-module-build"
+  },
+  "dependencies": {
+    "@companion-module/base": "~1.11.0"
+  },
+  "devDependencies": {
+    "@companion-module/tools": "~2.0.0"
+  }
+}

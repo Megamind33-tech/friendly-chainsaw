@@ -90,6 +90,11 @@ interface PlayoutState {
   takeItem: (id: string) => void;
 
   clearAsRun: () => void;
+  /** Phase 7 CSV/JSON import: replace the current rundown items entirely.
+   * Deliberately not "append": operators importing a new schedule expect
+   * the old one gone, and merge semantics are ambiguous (dedup by title?
+   * by scene?). Persists immediately; does not affect the as-run log. */
+  replaceRundown: (items: ProgramItem[]) => void;
 }
 
 const STORAGE_KEY = "playout-rundown-v2";
@@ -359,6 +364,21 @@ export const usePlayoutStore = create<PlayoutState>((set, get) => {
         queueMicrotask(persist);
         return { asRun: [] };
       }),
+
+    replaceRundown: (items) => {
+      // If we're currently airing an item that won't survive the import,
+      // stop cleanly first — otherwise the ticker keeps advancing a
+      // ghost currentId that no longer resolves. `stop()` closes the
+      // as-run entry with the honest end status.
+      const { currentId } = get();
+      if (currentId && !items.some((i) => i.id === currentId)) {
+        get().stop();
+      }
+      set(() => {
+        queueMicrotask(persist);
+        return { items };
+      });
+    },
   };
 });
 
@@ -417,6 +437,162 @@ export function buildAsRunCsv(entries: AsRunEntry[]): string {
 
 function csvCell(v: string): string {
   return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/**
+ * Rundown CSV parser (Phase 7 import). Columns (order-tolerant, matched by
+ * header name, case-insensitive): `title` (required), `type`, `duration`,
+ * `sceneName`. Missing `title` on a row skips the row silently rather than
+ * failing the whole import — real spreadsheets have trailing blank rows.
+ *
+ * `duration` accepts either a bare number ("300") or `mm:ss` / `hh:mm:ss`.
+ * `type` is validated against ProgramType and defaults to "program" when
+ * blank/unknown (never silently coerced to an invalid enum).
+ * `sceneName` looks up an existing scene id by name; a name that doesn't
+ * match any scene yields `sceneId: null` (not an error — the operator will
+ * assign later).
+ */
+export function parseRundownCsv(
+  csv: string,
+  sceneNameToId: Record<string, string>,
+): ProgramItem[] {
+  const rows = parseCsvRows(csv);
+  if (rows.length === 0) return [];
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const idxOf = (name: string): number => header.indexOf(name);
+  const titleIdx = idxOf("title");
+  const typeIdx = idxOf("type");
+  const durIdx = idxOf("duration");
+  const sceneIdx = idxOf("scenename");
+  if (titleIdx < 0) return [];
+
+  const out: ProgramItem[] = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const title = (row[titleIdx] ?? "").trim();
+    if (!title) continue;
+    const typeRaw = typeIdx >= 0 ? (row[typeIdx] ?? "").trim().toLowerCase() : "";
+    const type: ProgramType = (["program", "live", "clip", "break", "id", "filler"] as const).includes(
+      typeRaw as ProgramType,
+    )
+      ? (typeRaw as ProgramType)
+      : "program";
+    const duration = durIdx >= 0 ? parseDuration(row[durIdx] ?? "") : 300;
+    const sceneName = sceneIdx >= 0 ? (row[sceneIdx] ?? "").trim() : "";
+    const sceneId = sceneName ? sceneNameToId[sceneName] ?? null : null;
+    out.push({
+      id: newId(),
+      title,
+      type,
+      sceneId,
+      duration: Math.max(1, Math.round(duration)),
+    });
+  }
+  return out;
+}
+
+/** Serializes the current rundown to CSV (round-trips through `parseRundownCsv`). */
+export function buildRundownCsv(items: ProgramItem[], sceneIdToName: Record<string, string>): string {
+  const header = ["title", "type", "duration", "sceneName"];
+  const rows = items.map((item) => {
+    const sceneName = item.sceneId ? sceneIdToName[item.sceneId] ?? "" : "";
+    return [item.title, item.type, String(item.duration), sceneName].map(csvCell).join(",");
+  });
+  return [header.join(","), ...rows].join("\r\n");
+}
+
+/** JSON export of the rundown — smaller/tighter than CSV, keeps native shapes. */
+export function buildRundownJson(items: ProgramItem[]): string {
+  return JSON.stringify(
+    {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      items,
+    },
+    null,
+    2,
+  );
+}
+
+export function parseRundownJson(text: string): ProgramItem[] {
+  const parsed = JSON.parse(text);
+  const items = Array.isArray(parsed) ? parsed : parsed?.items;
+  if (!Array.isArray(items)) return [];
+  const out: ProgramItem[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const title = typeof raw.title === "string" ? raw.title.trim() : "";
+    if (!title) continue;
+    const typeVal = typeof raw.type === "string" ? raw.type : "program";
+    const type: ProgramType = (["program", "live", "clip", "break", "id", "filler"] as const).includes(
+      typeVal as ProgramType,
+    )
+      ? (typeVal as ProgramType)
+      : "program";
+    const duration = typeof raw.duration === "number" && raw.duration > 0 ? Math.round(raw.duration) : 300;
+    const sceneId = typeof raw.sceneId === "string" ? raw.sceneId : null;
+    out.push({ id: newId(), title, type, sceneId, duration });
+  }
+  return out;
+}
+
+/** Duration parse: bare number of seconds OR `mm:ss` OR `hh:mm:ss`. */
+function parseDuration(raw: string): number {
+  const s = raw.trim();
+  if (!s) return 300;
+  if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
+  const parts = s.split(":").map((p) => Number(p.trim()));
+  if (parts.some(Number.isNaN)) return 300;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return 300;
+}
+
+/**
+ * Minimal CSV row parser — RFC 4180 subset. Handles quoted cells with
+ * embedded commas, embedded quotes ("" → "), and \r\n or \n line endings.
+ * Explicitly not a general-purpose parser; the input surface here is only
+ * ever this project's own exports or a spreadsheet-authored rundown.
+ */
+function parseCsvRows(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (csv[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (c === "\n" || c === "\r") {
+      // Only emit a row on the first EOL char; skip a following \n after \r.
+      row.push(cell);
+      cell = "";
+      if (row.some((v) => v !== "")) rows.push(row);
+      row = [];
+      if (c === "\r" && csv[i + 1] === "\n") i++;
+    } else {
+      cell += c;
+    }
+  }
+  if (cell !== "" || row.length > 0) {
+    row.push(cell);
+    if (row.some((v) => v !== "")) rows.push(row);
+  }
+  return rows;
 }
 
 /** Triggers a browser download of the as-run CSV. */
