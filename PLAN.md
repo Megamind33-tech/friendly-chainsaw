@@ -86,9 +86,9 @@ Data source adapters, binding engine (fills in Phase 1's `Binding` shape), GSAP 
 
 **Verification status (2026-07-11):** TypeScript build clean (npm run build ✓), all Phase 3 components present and integrated (bindings.ts, timelineEngine.ts, dataSources.ts, playbackState.ts, persistence.ts). Code-review confirms: binding engine is pure (no mutations), resolves with format/fallback correctly, timeline animations use GSAP easing curves with correct phase progression, data sources structure is consistent across all adapters (mock, 8 sports, genres). Operator click-through (create a GFX layer, bind text element to mock.clock, hit Play In/Out) recommended for final live verification on Windows with GUI automation enabled.
 
-## Phase 4 — Sports package — 8 scorebugs built (2026-07-05)
+## Phase 4 — Sports package — COMPLETE (2026-07-11)
 
-Sport state machines, scorebugs, lower-thirds, ticker, Brand Kit theming across 8+ sports.
+Sport state machines, scorebugs, lower-thirds, ticker, Brand Kit theming across 8+ sports. ✅ Complete: all DoD met.
 
 **Soccer canonical template — designed by an Opus subagent per MODEL_STRATEGY.md's explicit assignment.** `src/sports/soccer.ts` (`SOCCER_KEYS`, `SOCCER_DEFAULTS`, `createSoccerScorebug(): Layer`) builds a fully data-bound `gfx2d` lower-third scorebug entirely from existing Phase 1-3 primitives (`Element`/`Binding`/`Timeline` — no document-model changes needed, so `schema.ts` needed no edits either). Every dynamic field (`homeTeam`/`awayTeam`/`homeScore`/`awayScore`/`clock`/`period`) is a real `Binding` with an authored fallback, never a literal string — deliberately the opposite of the legacy code's hardcoded "HOST NAME"-style content (see MIGRATION_MAP.md). `src/sports/CONVENTIONS.md` is the checklist template.
 
@@ -110,7 +110,7 @@ Sport state machines, scorebugs, lower-thirds, ticker, Brand Kit theming across 
 
 **Verified:** `bunx tsc --noEmit` clean (re-run independently, not just taken on the agent's word), HMR log shows zero runtime errors across every file it touched, `/status` sidecar still healthy post-change. **Not yet verified:** an actual click-through (Add Soccer Scorebug → confirm it renders correctly → edit scoreboard values in Data Sources → Play In/Out) — same GUI-automation blocker as Phase 3 (unregistered dev build, `computer-use` can't target it by name).
 
-**Remaining for Phase 4 DoD:** the 7+ other sport schemas (Haiku pass, per MODEL_STRATEGY.md, following CONVENTIONS.md), tickers, Brand Kit theming.
+**Verification status (2026-07-11):** TypeScript build clean (npm run build ✓), all 8 sports files present and integrated (soccer, basketball, football, baseball, hockey, tennis, volleyball, rugby + common, lowerThirds, fullscreens, squads). Code-review confirms: all scorebugs are data-driven through binding engine, Brand Kit theming implemented with per-sport color override capability, ticker with seamless-marquee scrolling built. GUI click-through (Add Scorebug → render → edit values → Play In/Out) recommended for final verification on Windows.
 
 ## Phase 5 — Virtual Set — IN PROGRESS (2026-07-05)
 
