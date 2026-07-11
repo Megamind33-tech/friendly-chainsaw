@@ -37,6 +37,14 @@ export interface ProgramItem {
   sceneId: string | null;
   /** Planned on-air duration, seconds. */
   duration: number;
+  /**
+   * Phase 10.1 — external-system correlation key. Discriminated per
+   * source so a MOS story id (`mos:STORY01`) and a Rundown Studio cue id
+   * can coexist without colliding. Used by `applyMosStoryDelete/Insert/
+   * Move` to identify items across mutation messages that arrive after
+   * the initial `roCreate`. `undefined` for locally-created items.
+   */
+  externalId?: string;
 }
 
 export type AsRunStatus = "on-air" | "completed" | "cut" | "skipped";
@@ -597,6 +605,134 @@ function parseCsvRows(csv: string): string[][] {
     if (row.some((v) => v !== "")) rows.push(row);
   }
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10.1 — MOS mutation ops. Pure functions used by controlBridge.ts
+// when a mos:message event arrives; unit-tested directly by
+// verify-phase10_1.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a MOS story ID into the discriminated externalId we store on
+ * ProgramItem. Prefix keeps MOS ids from colliding with other external
+ * sources (Rundown Studio, etc.) if those grow externalId support.
+ */
+export function mosExternalId(mosStoryId: string): string {
+  return `mos:${mosStoryId}`;
+}
+
+/**
+ * Map a MOS story (from Rust's parsed `MosStory`) to a fresh ProgramItem.
+ * `duration_sec` comes across as `durationSec` per serde's camelCase
+ * rename. Missing/zero durations fall back to 30s (same default the Rust
+ * parser applies when `<storyDuration>` is absent).
+ */
+export interface MosStoryLike {
+  id: string;
+  slug: string;
+  durationSec?: number;
+}
+export function mapMosStoryToItem(story: MosStoryLike): ProgramItem {
+  // A 0 or missing `storyDuration` in MOS is genuinely "unknown" (the
+  // field is optional in the spec — see Rust's parser which defaults to
+  // 30s when absent). Treat non-positive values here the same way.
+  // Differs from the Rundown Studio import policy (which clamps small→1s)
+  // because RS's `duration` is required and semantically honored; MOS's
+  // is not.
+  const raw = Number(story.durationSec ?? 30);
+  const duration = Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.round(raw)) : 30;
+  return {
+    id: newId(),
+    title: (story.slug ?? "").trim() || `Story ${story.id}`,
+    type: "program",
+    sceneId: null,
+    duration,
+    externalId: mosExternalId(story.id),
+  };
+}
+
+/**
+ * Apply a `roStoryDelete` mutation — remove items whose `externalId`
+ * matches any of the given MOS story ids. Ids without a matching item are
+ * ignored silently (real NRCS sends can race with an operator manually
+ * deleting an item).
+ */
+export function applyMosStoryDelete(items: ProgramItem[], mosStoryIds: string[]): ProgramItem[] {
+  const targets = new Set(mosStoryIds.map(mosExternalId));
+  return items.filter((it) => !it.externalId || !targets.has(it.externalId));
+}
+
+/**
+ * Apply a `roStoryInsert`: put `newStories` mapped as ProgramItems into
+ * `items`. If `targetMosId` is present and matches an existing item's
+ * externalId, insert BEFORE that item; otherwise append at the end.
+ * Matches the semantics MOS 2.8.5's `roStoryInsert` spec describes.
+ */
+export function applyMosStoryInsert(
+  items: ProgramItem[],
+  newStories: MosStoryLike[],
+  targetMosId: string | null,
+): ProgramItem[] {
+  const inserted = newStories.map(mapMosStoryToItem);
+  if (targetMosId === null || targetMosId === undefined) {
+    return [...items, ...inserted];
+  }
+  const idx = items.findIndex((it) => it.externalId === mosExternalId(targetMosId));
+  if (idx < 0) return [...items, ...inserted];
+  return [...items.slice(0, idx), ...inserted, ...items.slice(idx)];
+}
+
+/**
+ * Apply a `roStoryMove`: reorder existing items so the given `mosStoryIds`
+ * land at `targetMosId`'s position (before it), preserving their relative
+ * order among themselves. Items outside the moved set stay in place.
+ */
+export function applyMosStoryMove(
+  items: ProgramItem[],
+  mosStoryIds: string[],
+  targetMosId: string | null,
+): ProgramItem[] {
+  const movingExtIds = new Set(mosStoryIds.map(mosExternalId));
+  // Moved items land in the ORDER specified by `mosStoryIds` (not their
+  // original order in `items`). This matches MOS 2.8.5's `roStoryMove`
+  // semantics — the message's ordering is the operator's intent, and any
+  // other interpretation makes reordering-within-a-moving-group
+  // impossible to express.
+  const moving: ProgramItem[] = [];
+  for (const mid of mosStoryIds) {
+    const it = items.find((i) => i.externalId === mosExternalId(mid));
+    if (it) moving.push(it);
+  }
+  const remaining = items.filter((it) => !it.externalId || !movingExtIds.has(it.externalId));
+  if (targetMosId === null || targetMosId === undefined) {
+    return [...remaining, ...moving];
+  }
+  const targetExt = mosExternalId(targetMosId);
+  const targetIdx = remaining.findIndex((it) => it.externalId === targetExt);
+  if (targetIdx < 0) return [...remaining, ...moving];
+  return [...remaining.slice(0, targetIdx), ...moving, ...remaining.slice(targetIdx)];
+}
+
+/**
+ * Apply a `roStorySend`: replace a single item's fields based on an
+ * incoming MOS story update. Items are matched by externalId. Items
+ * without a matching id are added as new.
+ */
+export function applyMosStorySend(items: ProgramItem[], story: MosStoryLike): ProgramItem[] {
+  const extId = mosExternalId(story.id);
+  const idx = items.findIndex((it) => it.externalId === extId);
+  if (idx < 0) return [...items, mapMosStoryToItem(story)];
+  const dur = Math.max(1, Math.round(Number(story.durationSec ?? items[idx].duration)));
+  return items.map((it, i) =>
+    i === idx
+      ? {
+          ...it,
+          title: (story.slug ?? "").trim() || it.title,
+          duration: Number.isFinite(dur) && dur > 0 ? dur : it.duration,
+        }
+      : it,
+  );
 }
 
 /** Triggers a browser download of the as-run CSV. */

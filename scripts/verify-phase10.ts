@@ -125,7 +125,7 @@ const okRule: AutomationRule = {
   name: "Take on preview arm",
   enabled: true,
   trigger: { kind: "on_take" },
-  action: { type: "take" },
+  actions: [{ type: "take" }],
 };
 
 test("valid rule accepted", () => {
@@ -152,7 +152,7 @@ test("timer with seconds < 1 rejected", () => {
 
 test("unknown action type rejected", () => {
   assertThrows(
-    () => validateRule({ ...okRule, action: { type: "bogus_action" as never } }),
+    () => validateRule({ ...okRule, actions: [{ type: "bogus_action" as never }] }),
     "unknown action type",
   );
 });

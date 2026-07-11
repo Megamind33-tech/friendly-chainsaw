@@ -1,4 +1,4 @@
-//! Phase 10a — MOS Protocol Stage 1.
+//! Phase 10 — MOS Protocol.
 //!
 //! Accepts rundowns from a Newsroom Computer System (iNews, ENPS, Octopus)
 //! over the real MOS 2.8.5 wire format: raw TCP, XML per message,
@@ -9,11 +9,23 @@
 //! a small-station iNews rundown transfer; deliberately narrow so the
 //! parser stays honest (see `docs/PHASE10_DESIGN.md`).
 //!
+//! Phase 10.1: TCP listener now spawns on startup when
+//! `settings.enabled = true`. Per-connection loop reads null-terminated
+//! frames, ACKs heartbeats inline, and emits `mos:message` Tauri events
+//! for all other messages so `controlBridge.ts` can apply rundown
+//! mutations against `usePlayoutStore`.
+//!
 //! Not verified against a live iNews instance — no NRCS to hand in this
 //! environment. Parser is verified against synthetic MOS XML samples
 //! matching the public spec.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpListener;
+use tokio::sync::Notify;
 
 /// The set of MOS message roles we parse. Everything outside this list is
 /// acknowledged (heartbeat-style) but produces no state change; the
@@ -399,6 +411,319 @@ pub fn set_mos_config(
             enabled: Some(enabled),
         },
     )
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10.1 — TCP listener (server)
+// ---------------------------------------------------------------------------
+
+/// Cap per connection to catch a broken NRCS that floods. The automation
+/// engine uses the same rolling-window primitive; the number here is
+/// higher because MOS heartbeats can legitimately reach ~10Hz on a busy
+/// rundown and we shouldn't refuse them.
+const MAX_MSGS_PER_SEC: usize = 100;
+/// Maximum concurrent NRCS connections. MOS isn't a public service —
+/// a small station has one NCS, not four. This is a defense in depth
+/// against a rogue port scanner, not a real limit.
+const MAX_CONCURRENT: usize = 4;
+/// Guard against a malformed message that never terminates. Real MOS
+/// messages fit well under this.
+const MAX_FRAME_BYTES: usize = 128 * 1024;
+
+/// Runtime handle for the running listener — dropping this cancels the
+/// accept loop (its `Notify` is triggered on shutdown). Stored in Tauri
+/// state so the restart command can swap it atomically.
+pub struct MosServerHandle {
+    shutdown: Arc<Notify>,
+}
+
+pub type MosServerState = Arc<Mutex<Option<MosServerHandle>>>;
+
+/// Emitted payload for a `mos:message` Tauri event. The JS side pattern-
+/// matches on `role` and interprets `data` accordingly.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MosMessageEvent {
+    pub role: String,
+    pub message_id: String,
+    pub ro_id: Option<String>,
+    /// The full parsed message, serialized as JSON per `MosMessage`'s
+    /// `#[serde(rename_all = "camelCase")]` shape.
+    pub data: serde_json::Value,
+}
+
+fn role_of(msg: &MosMessage) -> &'static str {
+    match msg {
+        MosMessage::Heartbeat { .. } => "heartbeat",
+        MosMessage::MosId { .. } => "mosID",
+        MosMessage::RoCreate { .. } => "roCreate",
+        MosMessage::RoStorySend { .. } => "roStorySend",
+        MosMessage::RoStoryDelete { .. } => "roStoryDelete",
+        MosMessage::RoStoryInsert { .. } => "roStoryInsert",
+        MosMessage::RoStoryMove { .. } => "roStoryMove",
+        MosMessage::RoDelete { .. } => "roDelete",
+        MosMessage::Unhandled { .. } => "unhandled",
+    }
+}
+
+fn ro_id_of(msg: &MosMessage) -> Option<String> {
+    match msg {
+        MosMessage::RoCreate { ro_id, .. }
+        | MosMessage::RoStorySend { ro_id, .. }
+        | MosMessage::RoStoryDelete { ro_id, .. }
+        | MosMessage::RoStoryInsert { ro_id, .. }
+        | MosMessage::RoStoryMove { ro_id, .. }
+        | MosMessage::RoDelete { ro_id, .. } => Some(ro_id.clone()),
+        _ => None,
+    }
+}
+
+fn message_id_of(msg: &MosMessage) -> String {
+    match msg {
+        MosMessage::Heartbeat { message_id }
+        | MosMessage::MosId { message_id, .. }
+        | MosMessage::RoCreate { message_id, .. }
+        | MosMessage::RoStorySend { message_id, .. }
+        | MosMessage::RoStoryDelete { message_id, .. }
+        | MosMessage::RoStoryInsert { message_id, .. }
+        | MosMessage::RoStoryMove { message_id, .. }
+        | MosMessage::RoDelete { message_id, .. }
+        | MosMessage::Unhandled { message_id, .. } => message_id.clone(),
+    }
+}
+
+/// Per-connection rate limiter. Rolling 1-second window with a hard cap.
+/// A malformed NRCS that floods gets its connection dropped rather than
+/// being allowed to burn CPU parsing.
+struct RateWindow {
+    timestamps: std::collections::VecDeque<std::time::Instant>,
+}
+impl RateWindow {
+    fn new() -> Self {
+        Self { timestamps: std::collections::VecDeque::with_capacity(MAX_MSGS_PER_SEC + 8) }
+    }
+    fn check_and_record(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let window_start = now - std::time::Duration::from_secs(1);
+        while let Some(&t) = self.timestamps.front() {
+            if t < window_start {
+                self.timestamps.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.timestamps.len() >= MAX_MSGS_PER_SEC {
+            return false;
+        }
+        self.timestamps.push_back(now);
+        true
+    }
+}
+
+async fn handle_connection(
+    mut stream: tokio::net::TcpStream,
+    peer: std::net::SocketAddr,
+    our_mos_id: String,
+    expected_ncs_id: Option<String>,
+    app: AppHandle,
+) {
+    let (mut reader, mut writer) = stream.split();
+    let mut buf = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+    let mut rate = RateWindow::new();
+
+    loop {
+        let n = match reader.read(&mut chunk).await {
+            Ok(0) => {
+                eprintln!("mos: {peer} closed connection");
+                return;
+            }
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("mos: read from {peer} failed: {e}");
+                return;
+            }
+        };
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > MAX_FRAME_BYTES {
+            eprintln!("mos: {peer} frame exceeded {MAX_FRAME_BYTES} bytes without terminator; dropping");
+            return;
+        }
+
+        // Split by null terminators — a single read may contain multiple
+        // messages or a partial one.
+        while let Some(pos) = buf.iter().position(|&b| b == 0) {
+            let frame: Vec<u8> = buf.drain(..=pos).collect();
+            let payload = &frame[..frame.len() - 1]; // strip trailing \x00
+
+            if !rate.check_and_record() {
+                eprintln!("mos: {peer} exceeded {MAX_MSGS_PER_SEC} msg/sec — dropping connection");
+                return;
+            }
+
+            let msg = match parse_mos_message(payload) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("mos: parse error from {peer}: {e}");
+                    continue;
+                }
+            };
+
+            // Heartbeat: ACK inline. NRCS expects a heartbeat back with
+            // the same messageID within a short window or it may close
+            // the connection.
+            if let MosMessage::Heartbeat { message_id } = &msg {
+                let ack = build_heartbeat_ack(message_id, &our_mos_id, "");
+                if let Err(e) = writer.write_all(&ack).await {
+                    eprintln!("mos: heartbeat ACK to {peer} failed: {e}");
+                    return;
+                }
+                // Don't emit heartbeat events to JS — they'd flood the
+                // control bridge and carry no operator-visible info.
+                continue;
+            }
+
+            // MosID handshake: if we have an expected NCS ID configured
+            // and this connection's ID doesn't match, close the socket.
+            // Prevents an accidental cross-connect to the wrong newsroom.
+            if let MosMessage::MosId { ncs_id, .. } = &msg {
+                if let Some(expected) = &expected_ncs_id {
+                    if ncs_id != expected {
+                        eprintln!("mos: {peer} MosID ncsID '{ncs_id}' does not match expected '{expected}' — closing");
+                        return;
+                    }
+                }
+            }
+
+            // Everything else: emit to JS. Serialize the message enum via
+            // its own Serialize impl (camelCase, tag on discriminant).
+            let event = MosMessageEvent {
+                role: role_of(&msg).to_string(),
+                message_id: message_id_of(&msg),
+                ro_id: ro_id_of(&msg),
+                data: serde_json::to_value(&msg).unwrap_or(serde_json::Value::Null),
+            };
+            if let Err(e) = app.emit("mos:message", event) {
+                eprintln!("mos: emit failed: {e}");
+            }
+        }
+    }
+}
+
+/// Spawn the MOS TCP listener. Returns an `MosServerHandle` whose `Drop`
+/// (via the Notify) cancels the accept loop and terminates all live
+/// connections.
+pub async fn spawn_mos_server(app: AppHandle, settings: MosSettingsFile) -> Result<MosServerHandle, String> {
+    let port = settings.listen_port.unwrap_or(DEFAULT_PORT);
+    let our_mos_id = settings.our_mos_id.unwrap_or_else(|| DEFAULT_MOS_ID.to_string());
+    let expected_ncs_id = settings.expected_ncs_id.filter(|s| !s.trim().is_empty());
+
+    let addr = format!("0.0.0.0:{port}");
+    let listener = TcpListener::bind(&addr)
+        .await
+        .map_err(|e| format!("failed to bind {addr}: {e}"))?;
+    eprintln!("mos: listening on {addr} (our_mos_id={our_mos_id})");
+
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = shutdown.clone();
+
+    tokio::spawn(async move {
+        let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        loop {
+            tokio::select! {
+                _ = shutdown_signal.notified() => {
+                    eprintln!("mos: shutdown requested, accept loop exiting");
+                    return;
+                }
+                accept = listener.accept() => {
+                    match accept {
+                        Ok((stream, peer)) => {
+                            let n = live.load(std::sync::atomic::Ordering::Relaxed);
+                            if n >= MAX_CONCURRENT {
+                                eprintln!("mos: refusing {peer} — at max {MAX_CONCURRENT} connections");
+                                drop(stream);
+                                continue;
+                            }
+                            live.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let live_clone = live.clone();
+                            let our_mos_id = our_mos_id.clone();
+                            let expected = expected_ncs_id.clone();
+                            let app_h = app.clone();
+                            tokio::spawn(async move {
+                                eprintln!("mos: {peer} connected");
+                                handle_connection(stream, peer, our_mos_id, expected, app_h).await;
+                                live_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("mos: accept failed: {e}");
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(MosServerHandle { shutdown })
+}
+
+/// Startup path: read settings, spawn if enabled. Called once from
+/// `.setup()` in lib.rs. Never panics — a bind failure or missing settings
+/// just leaves the server not-running, which shows up in the panel.
+pub fn maybe_start_mos_server(app: AppHandle, assets_dir: &Path, state: MosServerState) {
+    let settings = load_settings(assets_dir);
+    if !settings.enabled.unwrap_or(false) {
+        eprintln!("mos: not enabled in settings; server not started");
+        return;
+    }
+    let app_h = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match spawn_mos_server(app_h, settings).await {
+            Ok(handle) => {
+                if let Ok(mut guard) = state.lock() {
+                    *guard = Some(handle);
+                }
+            }
+            Err(e) => eprintln!("mos: server failed to start: {e}"),
+        }
+    });
+}
+
+/// Restart the listener with the currently-persisted settings. Called by
+/// the operator's Restart button after saving new settings.
+#[tauri::command]
+pub async fn restart_mos_server(
+    app: AppHandle,
+    state: tauri::State<'_, MosServerState>,
+    assets_state: tauri::State<'_, crate::AssetDirState>,
+) -> Result<bool, String> {
+    // Drop any existing handle first — this fires the shutdown Notify and
+    // the accept loop exits. Live connections finish their current frame
+    // and then find the socket closed.
+    if let Ok(mut guard) = state.lock() {
+        if let Some(handle) = guard.take() {
+            handle.shutdown.notify_waiters();
+        }
+    }
+    // Give the OS a moment to release the port. Not fully waterproof
+    // against SO_REUSEADDR races on Windows; a real production listener
+    // would poll for release. Fine for a single-operator workflow.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let settings = load_settings(&assets_state.assets_dir);
+    if !settings.enabled.unwrap_or(false) {
+        return Ok(false); // honestly reported "off"
+    }
+    match spawn_mos_server(app, settings).await {
+        Ok(handle) => {
+            if let Ok(mut guard) = state.lock() {
+                *guard = Some(handle);
+            }
+            Ok(true)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 #[cfg(test)]

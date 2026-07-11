@@ -47,7 +47,7 @@ export function AutomationPanel() {
       name: "New rule",
       enabled: false,
       trigger: { kind: "on_take" },
-      action: { type: "take" },
+      actions: [{ type: "take" }],
     };
     try {
       addRule(rule);
@@ -144,7 +144,9 @@ export function AutomationPanel() {
                   onClick={(e) => e.stopPropagation()}
                 />
                 <span className="flex-1 truncate text-[11px] text-text-muted-alt">{rule.name}</span>
-                <span className="text-[9px] text-text-muted">{rule.trigger.kind} → {rule.action.type}</span>
+                <span className="text-[9px] text-text-muted">
+                  {rule.trigger.kind} → {rule.actions.length === 1 ? rule.actions[0].type : `${rule.actions.length} actions`}
+                </span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -211,6 +213,22 @@ export function AutomationPanel() {
                         className="w-16 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
                       />
                       seconds
+                    </label>
+                  )}
+                  {selected.trigger.kind === "on_mos_message" && (
+                    <label className="flex items-center gap-1 text-[10px] text-text-muted">
+                      role filter (optional)
+                      <input
+                        type="text"
+                        value={selected.trigger.roleFilter ?? ""}
+                        placeholder="roCreate, roStorySend…"
+                        onChange={(e) =>
+                          handleUpdate({
+                            trigger: { kind: "on_mos_message", roleFilter: e.target.value || undefined },
+                          })
+                        }
+                        className="w-40 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+                      />
                     </label>
                   )}
                 </div>
@@ -291,44 +309,76 @@ export function AutomationPanel() {
                 )}
               </div>
 
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wide text-text-muted">Action</span>
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <select
-                    value={selected.action.type}
-                    onChange={(e) =>
+                  <span className="text-[10px] uppercase tracking-wide text-text-muted">
+                    Actions ({selected.actions.length})
+                  </span>
+                  <button
+                    onClick={() =>
                       handleUpdate({
-                        action: {
-                          ...selected.action,
-                          type: e.target.value as ControlCommandType,
-                        } satisfies AutomationAction,
+                        actions: [...selected.actions, { type: "take" } satisfies AutomationAction],
                       })
                     }
-                    className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+                    className="ml-auto flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] text-text-muted-alt hover:border-accent-blue"
                   >
-                    {CONTROL_COMMAND_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
+                    <Plus className="h-3 w-3" /> Add action
+                  </button>
                 </div>
                 <div className="text-[9px] text-text-muted">
-                  Actions targeting a specific scene/layer/item require the corresponding id
-                  as a raw JSON params blob. Set it here:
+                  Each action fires in order and counts separately against the rate limit
+                  ({RATE_LIMIT_MAX_ACTIONS}/1000ms across all rules).
                 </div>
-                <textarea
-                  value={JSON.stringify(selected.action.params ?? {}, null, 2)}
-                  onChange={(e) => {
-                    try {
-                      const params = JSON.parse(e.target.value);
-                      handleUpdate({ action: { ...selected.action, params } });
-                    } catch {
-                      // Invalid JSON — keep the text state (uncontrolled edit
-                      // window) and don't save until it parses.
-                    }
-                  }}
-                  className="h-20 w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
-                  placeholder="{}"
-                />
+                {selected.actions.map((action, i) => (
+                  <div
+                    key={i}
+                    className="space-y-1 rounded border border-border-subtle bg-bg-surface/40 p-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-text-muted">#{i + 1}</span>
+                      <select
+                        value={action.type}
+                        onChange={(e) => {
+                          const next = [...selected.actions];
+                          next[i] = { ...action, type: e.target.value as ControlCommandType };
+                          handleUpdate({ actions: next });
+                        }}
+                        className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+                      >
+                        {CONTROL_COMMAND_TYPES.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <button
+                        disabled={selected.actions.length <= 1}
+                        onClick={() =>
+                          handleUpdate({
+                            actions: selected.actions.filter((_, idx) => idx !== i),
+                          })
+                        }
+                        className="ml-auto text-text-muted hover:text-live-red disabled:opacity-30"
+                        title={selected.actions.length <= 1 ? "Rules must have at least one action" : "Remove"}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <textarea
+                      value={JSON.stringify(action.params ?? {}, null, 2)}
+                      onChange={(e) => {
+                        try {
+                          const params = JSON.parse(e.target.value);
+                          const next = [...selected.actions];
+                          next[i] = { ...action, params };
+                          handleUpdate({ actions: next });
+                        } catch {
+                          // Invalid JSON — don't save until it parses.
+                        }
+                      }}
+                      className="h-16 w-full rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+                      placeholder="{}"
+                    />
+                  </div>
+                ))}
               </div>
 
               <div className="text-[9px] text-text-muted">
