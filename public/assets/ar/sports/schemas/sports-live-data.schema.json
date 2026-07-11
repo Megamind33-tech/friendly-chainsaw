@@ -1,0 +1,146 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sports-live-data.schema.json",
+  "title": "Sports Live Data",
+  "description": "Provider-neutral live sports data consumed by the Sports AR 3D Models. Values arrive from manual input, local JSON/CSV/Excel, REST polling, WebSocket/SSE push, the internal match database or a remote provider — the shape is identical for all of them. Sport-specific fields live under `extensions` so the base schema (and every model manifest) never changes per sport.",
+  "type": "object",
+  "properties": {
+    "event": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sport": { "type": "string" },
+        "competition": { "type": "string" },
+        "season": { "type": "string" },
+        "round": { "type": "string" },
+        "venue": { "type": "string" },
+        "startTime": { "type": "string" },
+        "status": { "type": "string" },
+        "period": { "type": "string" },
+        "clock": { "type": "string", "pattern": "^$|^\\d{1,3}:\\d{2}$" },
+        "isLive": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "home": { "$ref": "#/definitions/team" },
+    "away": { "$ref": "#/definitions/team" },
+    "score": {
+      "type": "object",
+      "properties": {
+        "home": { "type": "integer", "minimum": 0 },
+        "away": { "type": "integer", "minimum": 0 },
+        "display": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "statistics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string" },
+          "label": { "type": "string" },
+          "home": { "type": ["string", "number"] },
+          "away": { "type": ["string", "number"] },
+          "unit": { "type": "string" }
+        },
+        "required": ["key"],
+        "additionalProperties": false
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "time": { "type": "string" },
+          "type": { "type": "string", "description": "goal | card | substitution | try | wicket | point | penalty | timeout | periodStart | periodEnd | custom" },
+          "team": { "type": "string", "enum": ["home", "away", ""] },
+          "player": { "type": "string" },
+          "detail": { "type": "string" }
+        },
+        "required": ["type"],
+        "additionalProperties": false
+      }
+    },
+    "players": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "team": { "type": "string", "enum": ["home", "away"] },
+          "name": { "type": "string" },
+          "number": { "type": ["string", "integer"] },
+          "position": { "type": "string" },
+          "photo": { "type": "string" },
+          "stats": { "type": "object" }
+        },
+        "required": ["name"],
+        "additionalProperties": true
+      }
+    },
+    "lineups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "team": { "type": "string", "enum": ["home", "away"] },
+          "formation": { "type": "string" },
+          "starters": { "type": "array", "items": { "type": "string" } },
+          "bench": { "type": "array", "items": { "type": "string" } },
+          "coach": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "standings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "position": { "type": "integer" },
+          "team": { "type": "string" },
+          "played": { "type": "integer" },
+          "won": { "type": "integer" },
+          "drawn": { "type": "integer" },
+          "lost": { "type": "integer" },
+          "points": { "type": "integer" },
+          "detail": { "type": "string" }
+        },
+        "required": ["team"],
+        "additionalProperties": false
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Sport-specific data that never changes the base model manifests. Recognised blocks: football (goals, cards, substitutions, possession, shots, shotsOnTarget, corners, fouls, offside, lineups, formation, addedTime), basketball (quarter, gameClock, teamFouls, timeouts, fgPct, threePct, rebounds, assists, playerPoints), rugby (tries, conversions, penalties, dropGoals, cards, possession, territory, scrums, lineouts), cricket (runs, wickets, overs, runRate, target, batsman, bowler, partnership, requiredRunRate), tennis (sets, games, points, serve, tieBreak, seed, matchStatus), hockey (period, goals, penalties, powerPlay, shots, saves).",
+      "additionalProperties": { "type": "object" }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "language": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "team": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "shortName": { "type": "string" },
+        "logo": { "type": "string" },
+        "score": { "type": "integer", "minimum": 0 },
+        "colourPrimary": { "type": "string", "pattern": "^$|^#[0-9a-fA-F]{6}$" },
+        "colourSecondary": { "type": "string", "pattern": "^$|^#[0-9a-fA-F]{6}$" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,114 @@
+@import "tailwindcss";
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/700.css";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+
+@theme {
+  --font-sans: "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+/*
+ * Broadcast console palette — single source of truth.
+ * Audited from the legacy mockup's scattered inline-hex Tailwind
+ * classes (see MIGRATION_MAP.md). This app is always dark; there is
+ * no light-theme toggle, so tokens live directly on :root.
+ */
+:root {
+  --radius: 0.375rem;
+
+  /* Charcoal + purple stripe — see docs/UI_VISUAL_SPEC.md */
+  --bg-deepest: #141418;
+  --bg-base: #1a1a20;
+  --bg-panel: #222228;
+  --bg-surface: #2a2a32;
+  --stripe-accent: #1a0a2e;
+  --stripe-active: #3d2660;
+  --accent-blue: #5a7aaa;
+  --accent-blue-bright: #8ab4f8;
+  --text-muted: #6e6e7e;
+  --text-muted-alt: #a8a8b8;
+  --text-bright: #d8d8e4;
+  --live-red: #cc0000;
+  --live-amber: #d9a441;
+  --border-subtle: #33333c;
+
+  /* shadcn semantic slots, mapped onto the palette above */
+  --background: var(--bg-base);
+  --foreground: var(--text-muted-alt);
+  --card: var(--bg-panel);
+  --card-foreground: var(--text-muted-alt);
+  --popover: var(--bg-panel);
+  --popover-foreground: var(--text-muted-alt);
+  --primary: var(--accent-blue);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-surface);
+  --secondary-foreground: var(--text-muted-alt);
+  --muted: var(--bg-surface);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--accent-blue-bright);
+  --accent-foreground: var(--bg-deepest);
+  --destructive: var(--live-red);
+  --destructive-foreground: #ffffff;
+  --border: var(--border-subtle);
+  --input: var(--border-subtle);
+  --ring: var(--accent-blue);
+}
+
+@theme inline {
+  /* Raw palette, exposed as utilities (bg-bg-panel, text-accent-blue-bright, ...) */
+  --color-bg-deepest: var(--bg-deepest);
+  --color-bg-base: var(--bg-base);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-surface: var(--bg-surface);
+  --color-accent-blue: var(--accent-blue);
+  --color-accent-blue-bright: var(--accent-blue-bright);
+  --color-text-muted: var(--text-muted);
+  --color-text-muted-alt: var(--text-muted-alt);
+  --color-live-red: var(--live-red);
+  --color-live-amber: var(--live-amber);
+  --color-border-subtle: var(--border-subtle);
+  --color-stripe-accent: var(--stripe-accent);
+  --color-stripe-active: var(--stripe-active);
+  --color-text-bright: var(--text-bright);
+
+  /* shadcn semantic utilities (bg-background, text-muted-foreground, border-border, ...) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}

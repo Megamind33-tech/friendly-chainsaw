@@ -1,0 +1,101 @@
+{
+  "manifestVersion": "1.0.0",
+  "libraryId": "sports_ar_models",
+  "displayName": "Sports AR 3D Models",
+  "category": "AR 3D Models",
+  "subcategory": "Sports Graphics",
+  "defaultCoordinateSystem": "Y_UP",
+  "defaultUnits": "metres",
+  "models": [
+    {
+      "id": "ar_sports_panel_01",
+      "name": "Sports AR Panel 01",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_01.glb",
+      "manifestPath": "manifests/ar_sports_panel_01.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_01.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_02",
+      "name": "Sports AR Panel 02",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_02.glb",
+      "manifestPath": "manifests/ar_sports_panel_02.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_02.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_03",
+      "name": "Sports AR Panel 03",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_03.glb",
+      "manifestPath": "manifests/ar_sports_panel_03.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_03.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_04",
+      "name": "Sports AR Panel 04",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_04.glb",
+      "manifestPath": "manifests/ar_sports_panel_04.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_04.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_05",
+      "name": "Sports AR Panel 05",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_05.glb",
+      "manifestPath": "manifests/ar_sports_panel_05.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_05.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_06",
+      "name": "Sports AR Panel 06",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_06.glb",
+      "manifestPath": "manifests/ar_sports_panel_06.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_06.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_07",
+      "name": "Sports AR Panel 07",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_07.glb",
+      "manifestPath": "manifests/ar_sports_panel_07.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_07.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_08",
+      "name": "Sports AR Panel 08",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_08.glb",
+      "manifestPath": "manifests/ar_sports_panel_08.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_08.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_09",
+      "name": "Sports AR Panel 09",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_09.glb",
+      "manifestPath": "manifests/ar_sports_panel_09.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_09.png",
+      "enabled": true
+    },
+    {
+      "id": "ar_sports_panel_10",
+      "name": "Sports AR Panel 10",
+      "version": "1.0.0",
+      "modelPath": "models/ar_sports_panel_10.glb",
+      "manifestPath": "manifests/ar_sports_panel_10.manifest.json",
+      "thumbnailPath": "thumbnails/ar_sports_panel_10.png",
+      "enabled": true
+    }
+  ]
+}

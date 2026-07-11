@@ -1,0 +1,65 @@
+{
+  "manifestVersion": "1.0.0",
+  "description": "Data-source configuration for the Sports AR 3D Models. Secrets are NEVER stored here — API keys/tokens go through the app's credential store (ai_settings-style Rust-side file) or environment variables.",
+  "sources": [
+    {
+      "id": "manual",
+      "type": "manual",
+      "enabled": true,
+      "description": "Operator-typed values in the Data workspace (sports.* feed)."
+    },
+    {
+      "id": "local_json",
+      "type": "json",
+      "enabled": true,
+      "description": "Local JSON file conforming to sports-live-data.schema.json, flattened into sports.* keys."
+    },
+    {
+      "id": "local_csv",
+      "type": "csv",
+      "enabled": true,
+      "description": "CSV / Excel-exported CSV (key,value rows or header row) merged into the live feeds."
+    },
+    {
+      "id": "rest_api",
+      "type": "rest",
+      "enabled": true,
+      "config": {
+        "url": "",
+        "method": "GET",
+        "headers": {},
+        "pollIntervalMs": 5000
+      }
+    },
+    {
+      "id": "websocket",
+      "type": "websocket",
+      "enabled": true,
+      "config": {
+        "url": "",
+        "reconnect": true,
+        "reconnectDelayMs": 2000
+      }
+    },
+    {
+      "id": "sse",
+      "type": "sse",
+      "enabled": false,
+      "config": {
+        "url": ""
+      }
+    },
+    {
+      "id": "internal_db",
+      "type": "internal",
+      "enabled": true,
+      "description": "The app's own match database / broadcast control state."
+    },
+    {
+      "id": "simulator",
+      "type": "simulator",
+      "enabled": true,
+      "description": "Built-in test data simulator (buildSportsTestPayload) for rehearsal — explicitly operator-triggered, never a silent default."
+    }
+  ]
+}

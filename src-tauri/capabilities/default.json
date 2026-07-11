@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for all windows",
+  "windows": ["control-room", "program", "preview"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}

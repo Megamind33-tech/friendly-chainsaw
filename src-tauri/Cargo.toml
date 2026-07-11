@@ -1,0 +1,77 @@
+[package]
+name = "broadcast-engine"
+version = "0.1.0"
+description = "Software-Defined Broadcast Graphics Engine (GFX + Virtual Set + AR)"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "broadcast_engine_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
+axum = "0.8.9"
+# Real-time document push (see lib.rs's document_stream_handler) is
+# Server-Sent Events, not WebSockets — one-directional server->client is all
+# that's needed, and unlike axum's "ws" feature (which needs
+# tokio-tungstenite, unreachable on this machine's network at the time this
+# was written — crates.io TLS revocation check failure), tokio-stream was
+# already a cached transitive dependency, so this needed no new download.
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "fs", "time"] }
+# Decodes the PNG that WebView2's CapturePreview produces (NDI Stage 2 — real
+# Program-window frames). Only the PNG codec is needed.
+image = { version = "0.25", default-features = false, features = ["png"] }
+# AI image generation (OpenAI gpt-image-1): the HTTP call runs in Rust so the
+# user's API key never touches the web layer. default-tls = native-tls =
+# SChannel on Windows, so no OpenSSL/nasm build deps. base64 decodes the
+# gpt-image-1 `b64_json` response into the asset pipeline.
+reqwest = { version = "0.12", features = ["json"] }
+base64 = "0.22"
+tauri-plugin-single-instance = "2.4.2"
+
+# The PNG decode chain is pathologically slow when built unoptimized: decoding
+# one 1080p CapturePreview frame takes ~2s in a stock dev build vs ~30ms
+# optimized, which throttled NDI Program capture to ~0.5 fps. Optimize just
+# these codec crates in dev (our own crate stays at the default debug settings,
+# so it's still fully debuggable) — this is the standard fix for slow-in-debug
+# image/compression crates.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+[target.'cfg(windows)'.dependencies]
+# Pinned to what tauri/wry already resolves (see Cargo.lock) — with_webview's
+# ICoreWebView2Controller/ICoreWebView2 types must match tauri's own vendored
+# version exactly or they won't be the same type at the call site.
+webview2-com = "=0.38.2"
+# Win32_System_Com* + Win32_System_Memory are for NDI Stage 2's Program-window
+# capture: CreateStreamOnHGlobal/GetHGlobalFromStream + GlobalLock/Size/Unlock
+# to read back the PNG CapturePreview writes into an IStream.
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Memory"] }
+# NDI itself is loaded dynamically at runtime (libloading), not linked at
+# build time — this is the NDI SDK's own recommended pattern (see
+# Processing.NDI.DynamicLoad.h) specifically so the app builds and runs fine
+# on a machine without the SDK/runtime installed, honestly reporting
+# unavailable instead of failing to build or crashing at load time.
+libloading = "0.8"

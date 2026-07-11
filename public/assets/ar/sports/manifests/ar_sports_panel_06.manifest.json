@@ -1,0 +1,361 @@
+{
+  "manifestVersion": "1.0.0",
+  "id": "ar_sports_panel_06",
+  "name": "Sports AR Panel 06",
+  "version": "1.0.0",
+  "description": "Wide hexagonal panel with a handle tag on the top edge and an elongated oval plinth.",
+  "category": "AR 3D Models",
+  "subcategory": "Sports Graphics",
+  "model": {
+    "format": "glb",
+    "path": "models/ar_sports_panel_06.glb",
+    "units": "metres",
+    "upAxis": "Y",
+    "pivot": "base-centre"
+  },
+  "thumbnail": {
+    "path": "thumbnails/ar_sports_panel_06.png"
+  },
+  "capabilities": {
+    "editableGeometry": true,
+    "editableMaterials": true,
+    "editableColours": true,
+    "dataDriven": true,
+    "animated": true,
+    "cameraFacing": true,
+    "worldLocked": true,
+    "presenterAnchored": true,
+    "floorAnchored": true
+  },
+  "geometry": {
+    "width": {
+      "default": 2.5,
+      "min": 0.5,
+      "max": 8,
+      "unit": "m"
+    },
+    "height": {
+      "default": 1.2,
+      "min": 0.3,
+      "max": 5,
+      "unit": "m"
+    },
+    "depth": {
+      "default": 0.16,
+      "min": 0.05,
+      "max": 1,
+      "unit": "m"
+    },
+    "frameThickness": {
+      "default": 0.075,
+      "min": 0.02,
+      "max": 0.4,
+      "unit": "m"
+    },
+    "frameDepth": {
+      "default": 0.07,
+      "min": 0.02,
+      "max": 0.4,
+      "unit": "m"
+    },
+    "baseWidth": {
+      "default": 3,
+      "min": 0.2,
+      "max": 9,
+      "unit": "m"
+    },
+    "baseDepth": {
+      "default": 0.62,
+      "min": 0.1,
+      "max": 3,
+      "unit": "m"
+    },
+    "baseHeight": {
+      "default": 0.13,
+      "min": 0.02,
+      "max": 1.5,
+      "unit": "m"
+    },
+    "cornerBevel": {
+      "default": 0.2,
+      "min": 0,
+      "max": 0.6,
+      "unit": "m"
+    },
+    "leftAngle": {
+      "default": 30,
+      "min": 0,
+      "max": 60,
+      "unit": "deg"
+    },
+    "rightAngle": {
+      "default": 34,
+      "min": 0,
+      "max": 60,
+      "unit": "deg"
+    },
+    "topAngle": {
+      "default": 0,
+      "min": 0,
+      "max": 60,
+      "unit": "deg"
+    },
+    "bottomAngle": {
+      "default": 0,
+      "min": 0,
+      "max": 60,
+      "unit": "deg"
+    },
+    "contentInset": {
+      "default": 0.02,
+      "min": 0,
+      "max": 0.3,
+      "unit": "m"
+    },
+    "stripWidth": {
+      "default": 0.028,
+      "min": 0.005,
+      "max": 0.12,
+      "unit": "m"
+    },
+    "stripDepth": {
+      "default": 0.03,
+      "min": 0.005,
+      "max": 0.12,
+      "unit": "m"
+    },
+    "tilt": {
+      "default": 2,
+      "min": -30,
+      "max": 30,
+      "unit": "deg"
+    }
+  },
+  "materialSlots": [
+    "CONTENT_SURFACE",
+    "INNER_FRAME",
+    "OUTER_FRAME_FRONT",
+    "OUTER_FRAME_REAR",
+    "SIDE_DEPTH_LEFT",
+    "SIDE_DEPTH_RIGHT",
+    "TOP_TRIM",
+    "BOTTOM_TRIM",
+    "BASE_TOP",
+    "BASE_MIDDLE",
+    "BASE_BOTTOM"
+  ],
+  "colourGroups": [
+    "content",
+    "framePrimary",
+    "frameSecondary",
+    "base",
+    "accent",
+    "emissive"
+  ],
+  "contentZones": [
+    {
+      "id": "title",
+      "node": "TITLE_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "logoHome",
+      "node": "LOGO_HOME_ZONE",
+      "type": "image",
+      "required": false
+    },
+    {
+      "id": "teamHome",
+      "node": "TEAM_HOME_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "scoreHome",
+      "node": "SCORE_HOME_ZONE",
+      "type": "number",
+      "required": false
+    },
+    {
+      "id": "scoreAway",
+      "node": "SCORE_AWAY_ZONE",
+      "type": "number",
+      "required": false
+    },
+    {
+      "id": "teamAway",
+      "node": "TEAM_AWAY_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "logoAway",
+      "node": "LOGO_AWAY_ZONE",
+      "type": "image",
+      "required": false
+    },
+    {
+      "id": "clock",
+      "node": "CLOCK_ZONE",
+      "type": "time",
+      "required": false
+    },
+    {
+      "id": "status",
+      "node": "STATUS_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "stats",
+      "node": "STATS_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "footer",
+      "node": "FOOTER_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "player",
+      "node": "PLAYER_ZONE",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "photo",
+      "node": "PHOTO_ZONE",
+      "type": "image",
+      "required": false
+    }
+  ],
+  "dataBindings": {
+    "match.id": null,
+    "match.sport": null,
+    "match.competition": null,
+    "match.round": null,
+    "match.venue": null,
+    "match.status": null,
+    "match.clock": null,
+    "match.period": null,
+    "home.id": null,
+    "home.name": null,
+    "home.shortName": null,
+    "home.logo": null,
+    "home.score": null,
+    "home.colourPrimary": null,
+    "home.colourSecondary": null,
+    "away.id": null,
+    "away.name": null,
+    "away.shortName": null,
+    "away.logo": null,
+    "away.score": null,
+    "away.colourPrimary": null,
+    "away.colourSecondary": null
+  },
+  "supportedSports": [
+    "football",
+    "basketball",
+    "rugby",
+    "cricket",
+    "tennis",
+    "hockey",
+    "baseball",
+    "volleyball",
+    "generic"
+  ],
+  "animations": {
+    "entrance": [
+      "fadeIn",
+      "slideUp",
+      "slideLeft",
+      "slideRight",
+      "scaleIn",
+      "rotateIn",
+      "riseFromFloor",
+      "frameAssemble",
+      "baseFirst",
+      "panelReveal",
+      "lightSweepReveal"
+    ],
+    "emphasis": [
+      "scoreFlash",
+      "goalPulse",
+      "cardAlert",
+      "statHighlight",
+      "softGlow",
+      "teamColourSweep",
+      "dataUpdatePulse",
+      "playerFocus"
+    ],
+    "exit": [
+      "fadeOut",
+      "slideDown",
+      "slideLeft",
+      "slideRight",
+      "scaleOut",
+      "frameDisassemble",
+      "lowerIntoFloor",
+      "lightFade"
+    ]
+  },
+  "placementModes": [
+    "worldLocked",
+    "floorAnchored",
+    "cameraFacing",
+    "presenterAnchored",
+    "playerAnchored",
+    "screenSpace",
+    "free3D",
+    "surfaceSnap",
+    "groundSnap"
+  ],
+  "performance": {
+    "defaultTier": "standard",
+    "tiers": [
+      "low",
+      "standard",
+      "high"
+    ]
+  },
+  "updateBehaviour": {
+    "default": "smoothTransition",
+    "options": [
+      "immediate",
+      "smoothTransition",
+      "numberRoll",
+      "fadeReplace",
+      "slideReplace",
+      "scoreFlash",
+      "goalAnimation",
+      "statPulse",
+      "none"
+    ],
+    "repeatSuppression": true
+  },
+  "validation": {
+    "score": {
+      "type": "integer",
+      "min": 0
+    },
+    "clock": {
+      "pattern": "^\\d{1,3}:\\d{2}$"
+    },
+    "colours": {
+      "type": "hex"
+    },
+    "images": {
+      "type": "url"
+    },
+    "onInvalid": "fallback"
+  },
+  "fallbacks": {
+    "text": "",
+    "number": 0,
+    "image": "",
+    "colour": "#FFFFFF"
+  }
+}
