@@ -1,5 +1,6 @@
 mod capture;
 mod control_server;
+mod mos;
 mod ndi;
 mod record;
 mod rundowncloud;
@@ -1312,7 +1313,9 @@ pub fn run() {
             rundowncloud::clear_rundowncloud_config,
             rundowncloud::ping_rundowncloud,
             rundowncloud::fetch_rundowncloud_rundown,
-            rundowncloud::fetch_rundowncloud_cues
+            rundowncloud::fetch_rundowncloud_cues,
+            mos::get_mos_status,
+            mos::set_mos_config
         ])
         .setup(move |app| {
             // The assets dir needs the app handle to resolve, so AppState is

@@ -26,7 +26,8 @@ import {
   type RundownCloudStatus,
   type RundownMetadata,
 } from "@/document/rundowncloud";
-import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Upload, Clock, Circle, Cloud } from "lucide-react";
+import { getMosStatus, setMosConfig, type MosStatus } from "@/document/mos";
+import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Upload, Clock, Circle, Cloud, Network } from "lucide-react";
 
 const TYPES: ProgramType[] = ["program", "live", "clip", "break", "id", "filler"];
 
@@ -94,6 +95,15 @@ export function PlayoutPanel() {
   const [rcConfigOpen, setRcConfigOpen] = useState(false);
   const [rcTokenInput, setRcTokenInput] = useState("");
   const [rcRundownIdInput, setRcRundownIdInput] = useState("");
+
+  // Phase 10a — MOS Protocol config surface (server spawn is deferred).
+  const [mosStatus, setMosStatus] = useState<MosStatus | null>(null);
+  const [mosConfigOpen, setMosConfigOpen] = useState(false);
+  const [mosError, setMosError] = useState<string | null>(null);
+  const [mosPortInput, setMosPortInput] = useState("10540");
+  const [mosOurIdInput, setMosOurIdInput] = useState("bge.local");
+  const [mosNcsIdInput, setMosNcsIdInput] = useState("");
+  const [mosEnabledInput, setMosEnabledInput] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNowClock(Date.now()), 1000);
@@ -261,6 +271,48 @@ export function PlayoutPanel() {
     }
   };
 
+  // MOS status watcher.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const s = await getMosStatus();
+        if (!alive) return;
+        setMosStatus(s);
+        setMosPortInput(String(s.listenPort));
+        setMosOurIdInput(s.ourMosId);
+        setMosNcsIdInput(s.expectedNcsId ?? "");
+        setMosEnabledInput(s.enabled);
+      } catch {
+        /* ok */
+      }
+    };
+    void load();
+    return () => {
+      alive = false;
+    };
+  }, [mosConfigOpen]);
+
+  const mosSaveConfig = async () => {
+    setMosError(null);
+    try {
+      const port = Number(mosPortInput);
+      if (!Number.isFinite(port) || port < 1 || port > 65535) {
+        setMosError("port must be 1..65535");
+        return;
+      }
+      await setMosConfig({
+        listenPort: port,
+        ourMosId: mosOurIdInput.trim(),
+        expectedNcsId: mosNcsIdInput.trim() || null,
+        enabled: mosEnabledInput,
+      });
+      setMosConfigOpen(false);
+    } catch (e) {
+      setMosError(String(e));
+    }
+  };
+
   if (!project) {
     return <div className="flex h-full items-center justify-center bg-bg-deepest font-mono text-xs text-text-muted">Loading…</div>;
   }
@@ -399,6 +451,106 @@ export function PlayoutPanel() {
           </div>
         )}
       </div>
+
+      {/* Phase 10a — MOS Protocol connector strip. */}
+      <div className="shrink-0 border-b border-border-subtle bg-bg-base px-2 py-1.5">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
+          <Network className="h-3.5 w-3.5 text-accent-blue-bright" />
+          <span className="font-semibold text-text-muted-alt">MOS Protocol</span>
+          {mosStatus ? (
+            <>
+              <span
+                className={`rounded border px-1 ${
+                  mosStatus.enabled ? "border-live-red text-live-red" : "border-border-subtle text-text-muted"
+                }`}
+              >
+                {mosStatus.enabled ? "listening" : "off"}
+              </span>
+              <span className="text-text-muted">port {mosStatus.listenPort}</span>
+              <span className="text-text-muted">id {mosStatus.ourMosId}</span>
+              {mosStatus.expectedNcsId && (
+                <span className="text-text-muted">← ncs {mosStatus.expectedNcsId}</span>
+              )}
+              <button
+                onClick={() => setMosConfigOpen(true)}
+                className="ml-auto rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue"
+              >
+                Configure
+              </button>
+            </>
+          ) : (
+            <span className="text-text-muted">loading…</span>
+          )}
+        </div>
+        {mosError && (
+          <div className="mt-1 font-mono text-[10px] text-live-red">
+            {mosError}
+            <button className="ml-2 underline" onClick={() => setMosError(null)}>dismiss</button>
+          </div>
+        )}
+      </div>
+
+      {mosConfigOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-[420px] rounded border border-border-subtle bg-bg-panel p-4 font-mono text-xs text-text-muted-alt shadow-lg">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <Network className="h-4 w-4 text-accent-blue-bright" />
+              Configure MOS Protocol
+            </div>
+            <label className="mb-2 flex flex-col gap-1 text-[10px] text-text-muted">
+              Listen port
+              <input
+                type="number"
+                value={mosPortInput}
+                onChange={(e) => setMosPortInput(e.target.value)}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-muted-alt outline-none focus:border-accent-blue"
+              />
+            </label>
+            <label className="mb-2 flex flex-col gap-1 text-[10px] text-text-muted">
+              Our MOS ID
+              <input
+                type="text"
+                value={mosOurIdInput}
+                onChange={(e) => setMosOurIdInput(e.target.value)}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-muted-alt outline-none focus:border-accent-blue"
+              />
+            </label>
+            <label className="mb-2 flex flex-col gap-1 text-[10px] text-text-muted">
+              Expected NCS MOS ID (optional — leave blank to accept any)
+              <input
+                type="text"
+                value={mosNcsIdInput}
+                onChange={(e) => setMosNcsIdInput(e.target.value)}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-muted-alt outline-none focus:border-accent-blue"
+              />
+            </label>
+            <label className="mb-3 flex items-center gap-2 text-[10px] text-text-muted">
+              <input
+                type="checkbox"
+                checked={mosEnabledInput}
+                onChange={(e) => setMosEnabledInput(e.target.checked)}
+              />
+              Enable listener (server spawn is Stage 2 — config persists now)
+            </label>
+            {mosError && <div className="mb-2 text-[10px] text-live-red">{mosError}</div>}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setMosConfigOpen(false)}
+                className="rounded px-3 py-1 text-[11px] text-text-muted hover:text-text-muted-alt"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={mosSaveConfig}
+                disabled={!mosOurIdInput.trim()}
+                className="rounded border border-accent-blue bg-accent-blue/30 px-3 py-1 text-[11px] font-semibold text-accent-blue-bright hover:bg-accent-blue/50 disabled:opacity-30"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {rcConfigOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

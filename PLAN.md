@@ -468,7 +468,31 @@ External rundown-system integration: import cues from **Rundown Studio** (`rundo
 
 **Explicit deferrals (Phase 9.1+):** live Socket.io state sync from Rundown Studio → our AS-RUN log; two-way control (sending start/pause/next back to their runtime); columns / mentions / text-variables integration for lower-third data bindings. All three raise the "who's in control" question and want their own design pass.
 
-## Phase 10+ — Automation scripting, MOS teleprompter, GPU capture
+## Phase 10 — MOS teleprompter + Automation scripting — COMPLETE (2026-07-11)
+
+Two independent Stage 1 deliverables in one PR: **MOS Protocol 2.8.5 subset** (rundown import from iNews/ENPS/Octopus over TCP) and **an in-app automation scripting engine** (trigger → optional condition → action, gated by a hard rate limit + operator kill switch). Both share PlayoutPanel/AutomationPanel surfaces, and automation rules can compose with rundown-item transitions that arrive over MOS or manually. Design in [`docs/PHASE10_DESIGN.md`](docs/PHASE10_DESIGN.md).
+
+**MOS Protocol Stage 1 (`src-tauri/src/mos.rs`, ~450 lines + 9 unit tests):** hand-rolled two-pass XML parser over `quick-xml`'s streaming reader — first pass records every `(path, text)` pair, second pass extracts fields by whitelisted path. Chosen over serde's macro derive because MOS messages have real dialect variance across NRCS vendors and a positional post-parse fixup (e.g. `roStoryInsert`'s first `<storyID>` = target, subsequent ones = payload) is impossible to express as serde annotations. Handles: `heartbeat`, `mosID`, `roCreate` (full rundown), `roStorySend` (single-story update), `roStoryDelete`/`Insert`/`Move`, `roDelete`. Unknown roles yield `MosMessage::Unhandled { role_name, message_id }` — never a panic, never a silent drop. `build_heartbeat_ack()` emits real MOS-wire-format XML with the `\x00` message terminator NRCS expects. Persisted config in `mos_settings.json` alongside the other feature-specific settings; Tauri commands `get_mos_status` + `set_mos_config` (listen port + our MOS ID + optional expected NCS MOS ID + enable flag). **The TCP listen loop itself is deferred to Stage 2** — this pass ships the parser, config surface, and heartbeat builder so a Stage 2 spawner is drop-in.
+
+**Automation scripting engine (`src/document/automation.ts`, ~250 lines):** rules are `{trigger, optional condition, action}`. Fixed trigger vocabulary (`on_take` / `on_item_start` / `on_item_end` / `on_timer(seconds)`), fixed action vocabulary (must be one of Phase 7's 13 `ControlCommandType` values), single-condition eval against a whitelisted set of `ControlStateSnapshot` field names with safe operators only (`== != > < >= <=`). Explicitly not Turing-complete — no loops, no user-defined functions, no dynamic key access. Rate limiter caps the whole engine at **10 actions per rolling 1s**; exceeding it puts the engine into a rateLimited state that stops all firing and surfaces a red banner until the operator clicks Resume. Master enable/disable is a persisted toggle, evaluated before any rule fires. Manual takes always win because rule-generated actions and Companion button presses route through the same `dispatchCommand` path — a store subscription that fires during a manual mutation still evaluates against the post-mutation snapshot.
+
+**Bridge integration (`controlBridge.ts`):** on_take / on_item_start / on_item_end triggers detect transitions by comparing successive snapshots (tracked in effect-local closures — not stored in Zustand, since prior-value state is a pure engine internal). on_timer piggybacks on the existing 1s status poll rather than spinning a second timer. Condition evaluation flattens the nested `snapshot.recording`/`snapshot.ndi` objects into a single-level `Record<string, unknown>` so `recordingActive` and `ndiStreaming` are one lookup, not two.
+
+**PlayoutPanel gains a MOS strip** below the Rundown Studio one; **AutomationPanel is a new dockview panel** in the Playout workspace (layout key bumped v1 → v2 to force redraw of persisted layouts). Two-pane rule editor: list on the left with per-rule enable toggles, editor on the right with trigger dropdown, optional-condition builder, action dropdown + JSON-blob params field for scene/layer/item ids. Master kill switch in the header, rate-limit banner with Resume button surfaces automatically when the engine trips.
+
+**Verified (2026-07-11):**
+- `bunx tsc --noEmit` exit 0
+- `bun run build` succeeds (25s)
+- `bun run scripts/verify-phase10.ts` — **25/25 pass** covering condition eval (every op × every scalar type + safe-fail on missing field + no string-to-number coercion), rule validation (empty name / unknown trigger / timer < 1s / unknown action / non-whitelist field), rate limit (10 allowed, 11th blocked, window rolls off, blocked action doesn't advance counter), timer scheduler (first-fire / before-interval / at-boundary / < 1s refused / multi-interval catch-up)
+- `cargo test --lib` — **30/30 pass** (17 previous + 4 rundowncloud + 9 new mos)
+- All previous verify-phase{7,8,9} still pass
+- CI extended to run verify-phase10
+
+**Not verified in this pass:** live NRCS interop. A signed MOS certification is a broadcast-industry process; Phase 10 delivers the wire format parsed correctly against public XML samples, not a certification claim. Real automation rule against a running Control Room is an operator pass on Windows.
+
+**Explicitly deferred (Stage 2):** MOS TCP server spawn (parser + config are here; spawner is the only remaining piece); MOS outbound status reporting (`roReq`, `roStorySchedule`); bidirectional `mosObj*` asset sync; automation multi-action rules (do 3 things when a trigger fires); composable conditions (AND/OR chains); MOS-message trigger source for automation (`on_mos_message`) — composes naturally once both are landed, deferred because operator use cases aren't clear yet.
+
+## Phase 11+ — Spout/Syphon, signed installers, live profiling
 
 ---
 
