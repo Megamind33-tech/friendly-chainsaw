@@ -147,8 +147,12 @@ const TICK_MS = 250;
  * Live items are open-ended: the control room ends them, so a manual take of a
  * live item is a normal completion, never an early "cut". Non-live items are
  * "cut" only when taken before their planned duration.
+ *
+ * Exported so Phase 8's verification harness can pin this invariant directly
+ * (a live take must never register as a cut) — the behavior is operator-
+ * visible in the as-run log and would silently regress if this ever changed.
  */
-function endStatusFor(item: ProgramItem | undefined, progress: number): "completed" | "cut" {
+export function endStatusFor(item: ProgramItem | undefined, progress: number): "completed" | "cut" {
   if (!item) return "completed";
   if (item.type === "live") return "completed";
   return progress >= item.duration - 0.3 ? "completed" : "cut";

@@ -239,3 +239,58 @@ pub async fn control_state_stream_handler(
     .chain(updates);
     (CORS, Sse::new(stream).keep_alive(KeepAlive::default()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// If a `ControlCommandType` is added on the TypeScript side but this
+    /// list drifts, every command matching the new name will silently 400
+    /// with "unknown command type" — an operator-visible regression that
+    /// TypeScript can't catch. Pinning the list here keeps drift honest.
+    #[test]
+    fn known_commands_contains_every_documented_command() {
+        for expected in [
+            "take",
+            "arm",
+            "playIn",
+            "playOut",
+            "takeItem",
+            "nextItem",
+            "previousItem",
+            "playSchedule",
+            "pauseSchedule",
+            "stopSchedule",
+            "startRecord",
+            "stopRecord",
+            "ping",
+        ] {
+            assert!(
+                KNOWN_COMMANDS.contains(&expected),
+                "KNOWN_COMMANDS missing documented command {expected}"
+            );
+        }
+        assert_eq!(
+            KNOWN_COMMANDS.len(),
+            13,
+            "KNOWN_COMMANDS length must match protocol docs; add + update this test if you added a command"
+        );
+    }
+
+    #[test]
+    fn is_rust_command_covers_rust_side_dispatch() {
+        assert!(is_rust_command("startRecord"));
+        assert!(is_rust_command("stopRecord"));
+        assert!(is_rust_command("ping"));
+    }
+
+    #[test]
+    fn is_rust_command_rejects_js_side_commands() {
+        // These commands emit to Control Room via `control:command` event —
+        // they must NEVER be handled inline in Rust or the state won't
+        // reflect in the JS store.
+        for js in ["take", "arm", "playIn", "playOut", "takeItem", "nextItem"] {
+            assert!(!is_rust_command(js), "{js} must route through the JS bridge");
+        }
+    }
+}

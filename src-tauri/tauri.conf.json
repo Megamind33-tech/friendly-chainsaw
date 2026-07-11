@@ -48,12 +48,42 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Broadcast Graphics Engine",
+    "shortDescription": "Software-Defined Broadcast Graphics Engine",
+    "longDescription": "GFX, virtual sets, AR, sports scorebugs, playout, NDI, and OBS output — an integrated broadcast graphics stack that runs on a single machine.",
+    "homepage": "https://github.com/Megamind33-tech/friendly-chainsaw",
+    "category": "Video",
+    "copyright": "© Broadcast Graphics Engine contributors",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "language": ["en-US"],
+        "upgradeCode": "9F8B6A17-3D2E-4F9C-BEE1-8A2C46B7A101"
+      },
+      "nsis": {
+        "installMode": "perMachine"
+      },
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libgtk-3-0t64 | libgtk-3-0",
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1"
+        ]
+      }
+    }
   }
 }
