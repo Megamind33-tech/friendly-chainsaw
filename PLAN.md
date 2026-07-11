@@ -444,7 +444,31 @@ Rust control server, Bitfocus Companion module, rundown runner (import/export), 
 - Signed installers (config is here; attaching a cert is one flag at build time).
 - Live 1080p60 profiling (needs a running Windows rig to profile against — Phase 2's frame-decode tuning was justified by real measurements, not guesses).
 
-## Phase 9+ — Post-hardening feature work
+## Phase 9 — Rundown Studio connector — COMPLETE (2026-07-11)
+
+External rundown-system integration: import cues from **Rundown Studio** (`rundownstudio.app`) into our playout. ✅ Complete: all DoD met except live token round-trip (needs a real Rundown Studio subscription to verify end-to-end).
+
+**Product rename — Rundown Studio, not "rundown.cloud".** The Phase 7 handoff brief said "rundown.cloud", but there's no product by that name. The real thing is Rundown Studio, which has a proper OpenAPI 3.0 spec (fetched live in this session: `/api-v0/docs/spec.json`, 40KB, 35 endpoints), Bearer-token auth, standard rate limiting, and already ships a Bitfocus Companion module — so we're integrating against the exact operator base whose Companion setup Phase 7 targets. Design in [`docs/PHASE9_DESIGN.md`](docs/PHASE9_DESIGN.md).
+
+**Rust connector (`src-tauri/src/rundowncloud.rs`, ~200 lines + 4 unit tests):** six Tauri commands — `get_rundowncloud_status`, `set_rundowncloud_config`, `clear_rundowncloud_config`, `ping_rundowncloud`, `fetch_rundowncloud_rundown`, `fetch_rundowncloud_cues`. Settings persist in `rundowncloud_settings.json` alongside `ai_settings.json` (the Phase 6.4 AI image gen precedent — parent-of-assets-dir so secrets never touch the axum-served path). API token never leaves Rust in plaintext; the status endpoint returns `configured: bool` only. Rundown ID validated as `^[a-zA-Z0-9]{20}$` client-side before every HTTP call so a mistyped ID gets a clear message instead of a server 400. Rundown/Cue schemas mirror the OpenAPI spec exactly (camelCase serde, `#[serde(default)]` on optional timestamps so a shape change from RS's side doesn't crash the parse). Bearer auth via `reqwest`'s `bearer_auth()` — token never appears in URLs or logs.
+
+**Pure mapping (`src/document/rundowncloud.ts`'s `mapCueToItem`):** deliberately side-effect-free so `verify-phase9.ts` can pin the mapping without spinning up a store or the Tauri IPC layer. Documented decisions: ms→s conversion clamped to a minimum of 1s (the playout ticker will divide-by-zero otherwise); title-based type inference with `\blive\b` regex (word-boundary, so "delivery"/"alive" don't false-positive as live cues); `sceneId` always null on import (operator assigns after); local ids regenerated (no round-trip contract with RS's Cue ids). Empty/whitespace titles fall back to `"Untitled cue"`.
+
+**PlayoutPanel UI:** compact "Rundown Studio" strip below the record-error banner. Not-configured: single "Configure" button. Configured: shows the rundown id, Ping (validates token vs `/ping`), Info (fetches rundown metadata, shows name + status inline), **Import cues** (fetches, maps, calls `replaceRundown` — Phase 7's ghost-currentId guard still applies), clear. Config dialog is a real password-input for the token, 20-char maxLength on the rundown-id field, Save disabled until both non-empty and id-length correct. Errors surfaced inline with dismiss.
+
+**Verified (2026-07-11):**
+- `bunx tsc --noEmit` exit 0
+- `bun run build` succeeds (17s)
+- `bun run scripts/verify-phase9.ts` — **22/22 pass** covering ms→s clamps, title normalization, `\blive\b` word-boundary matching, sceneId invariant, batch ordering, unique-id generation
+- `cargo check --tests` clean
+- `cargo test --lib` — **21/21 pass** (17 previous + 4 new rundowncloud tests)
+- CI workflow extended to run verify-phase9 alongside 7/8
+
+**Not verified in this pass:** live token round-trip against a real Rundown Studio account. No way to script this without a valid subscription; recommend an operator pass — configure a token in the panel, hit Ping (expect 200), hit Import cues, confirm items appear in the rundown tab.
+
+**Explicit deferrals (Phase 9.1+):** live Socket.io state sync from Rundown Studio → our AS-RUN log; two-way control (sending start/pause/next back to their runtime); columns / mentions / text-variables integration for lower-third data bindings. All three raise the "who's in control" question and want their own design pass.
+
+## Phase 10+ — Automation scripting, MOS teleprompter, GPU capture
 
 ---
 

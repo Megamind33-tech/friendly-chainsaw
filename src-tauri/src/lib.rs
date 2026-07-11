@@ -2,6 +2,7 @@ mod capture;
 mod control_server;
 mod ndi;
 mod record;
+mod rundowncloud;
 mod spout;
 mod status;
 
@@ -35,8 +36,8 @@ type ProgramDocState = Arc<Mutex<String>>;
 type DocBroadcast = Arc<tokio::sync::broadcast::Sender<String>>;
 
 #[derive(Clone)]
-struct AssetDirState {
-    assets_dir: PathBuf,
+pub(crate) struct AssetDirState {
+    pub(crate) assets_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -1305,7 +1306,13 @@ pub fn run() {
             record::get_record_status,
             start_record,
             stop_record,
-            spout::get_spout_status
+            spout::get_spout_status,
+            rundowncloud::get_rundowncloud_status,
+            rundowncloud::set_rundowncloud_config,
+            rundowncloud::clear_rundowncloud_config,
+            rundowncloud::ping_rundowncloud,
+            rundowncloud::fetch_rundowncloud_rundown,
+            rundowncloud::fetch_rundowncloud_cues
         ])
         .setup(move |app| {
             // The assets dir needs the app handle to resolve, so AppState is

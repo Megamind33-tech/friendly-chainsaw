@@ -15,7 +15,18 @@ import {
   type ProgramType,
   type AsRunStatus,
 } from "@/document/playout";
-import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Upload, Clock, Circle } from "lucide-react";
+import {
+  getRundownCloudStatus,
+  setRundownCloudConfig,
+  clearRundownCloudConfig,
+  pingRundownCloud,
+  fetchRundownCloudRundown,
+  fetchRundownCloudCues,
+  mapCuesToItems,
+  type RundownCloudStatus,
+  type RundownMetadata,
+} from "@/document/rundowncloud";
+import { Play, Pause, Square, SkipForward, SkipBack, Plus, Trash2, ChevronUp, ChevronDown, Copy, Radio, Repeat, Download, Upload, Clock, Circle, Cloud } from "lucide-react";
 
 const TYPES: ProgramType[] = ["program", "live", "clip", "break", "id", "filler"];
 
@@ -74,6 +85,15 @@ export function PlayoutPanel() {
   const [recording, setRecording] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Phase 9 — Rundown Studio connector.
+  const [rcStatus, setRcStatus] = useState<RundownCloudStatus | null>(null);
+  const [rcMeta, setRcMeta] = useState<RundownMetadata | null>(null);
+  const [rcError, setRcError] = useState<string | null>(null);
+  const [rcBusy, setRcBusy] = useState(false);
+  const [rcConfigOpen, setRcConfigOpen] = useState(false);
+  const [rcTokenInput, setRcTokenInput] = useState("");
+  const [rcRundownIdInput, setRcRundownIdInput] = useState("");
 
   useEffect(() => {
     const id = setInterval(() => setNowClock(Date.now()), 1000);
@@ -159,6 +179,88 @@ export function PlayoutPanel() {
     }
   };
 
+  // Load Rundown Studio status once on mount + when the config dialog closes.
+  useEffect(() => {
+    let alive = true;
+    void getRundownCloudStatus().then((s) => {
+      if (alive) setRcStatus(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [rcConfigOpen]);
+
+  const rcSaveConfig = async () => {
+    setRcError(null);
+    try {
+      await setRundownCloudConfig(rcTokenInput, rcRundownIdInput);
+      setRcTokenInput("");
+      setRcConfigOpen(false);
+    } catch (e) {
+      setRcError(String(e));
+    }
+  };
+
+  const rcClearConfig = async () => {
+    setRcError(null);
+    try {
+      await clearRundownCloudConfig();
+      setRcMeta(null);
+      const s = await getRundownCloudStatus();
+      setRcStatus(s);
+    } catch (e) {
+      setRcError(String(e));
+    }
+  };
+
+  const rcPing = async () => {
+    setRcError(null);
+    setRcBusy(true);
+    try {
+      const result = await pingRundownCloud();
+      if (!result.ok) {
+        setRcError(`ping failed: HTTP ${result.httpStatus}`);
+      } else {
+        setRcError(null);
+      }
+    } catch (e) {
+      setRcError(String(e));
+    } finally {
+      setRcBusy(false);
+    }
+  };
+
+  const rcRefreshMeta = async () => {
+    setRcError(null);
+    setRcBusy(true);
+    try {
+      const meta = await fetchRundownCloudRundown();
+      setRcMeta(meta);
+    } catch (e) {
+      setRcError(String(e));
+    } finally {
+      setRcBusy(false);
+    }
+  };
+
+  const rcImport = async () => {
+    setRcError(null);
+    setRcBusy(true);
+    try {
+      const resp = await fetchRundownCloudCues();
+      const items = mapCuesToItems(resp.cues);
+      if (items.length === 0) {
+        setRcError("no cues returned from Rundown Studio");
+      } else {
+        replaceRundown(items);
+      }
+    } catch (e) {
+      setRcError(String(e));
+    } finally {
+      setRcBusy(false);
+    }
+  };
+
   if (!project) {
     return <div className="flex h-full items-center justify-center bg-bg-deepest font-mono text-xs text-text-muted">Loading…</div>;
   }
@@ -231,6 +333,122 @@ export function PlayoutPanel() {
         <div className="shrink-0 border-b border-live-red/50 bg-live-red/10 px-2 py-1 font-mono text-[10px] text-live-red">
           {recordError}
           <button className="ml-2 underline" onClick={() => setRecordError(null)}>dismiss</button>
+        </div>
+      )}
+
+      {/* Phase 9 — Rundown Studio connector strip. */}
+      <div className="shrink-0 border-b border-border-subtle bg-bg-base px-2 py-1.5">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
+          <Cloud className="h-3.5 w-3.5 text-accent-blue-bright" />
+          <span className="font-semibold text-text-muted-alt">Rundown Studio</span>
+          {rcStatus?.configured ? (
+            <>
+              <span className="rounded border border-border-subtle px-1 text-text-muted" title={rcStatus.baseUrl}>
+                id {rcStatus.rundownId}
+              </span>
+              <button
+                disabled={rcBusy}
+                onClick={rcPing}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue disabled:opacity-30"
+              >
+                Ping
+              </button>
+              <button
+                disabled={rcBusy}
+                onClick={rcRefreshMeta}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue disabled:opacity-30"
+              >
+                Info
+              </button>
+              <button
+                disabled={rcBusy}
+                onClick={rcImport}
+                className="rounded border border-accent-blue bg-accent-blue/20 px-2 py-0.5 font-semibold text-accent-blue-bright hover:bg-accent-blue/30 disabled:opacity-30"
+              >
+                Import cues
+              </button>
+              <button
+                onClick={rcClearConfig}
+                className="rounded px-1.5 py-0.5 text-text-muted hover:text-live-red"
+                title="Clear stored token + rundown id"
+              >
+                clear
+              </button>
+              {rcMeta && (
+                <span className="ml-2 truncate text-text-muted" title={`${rcMeta.startTime} → ${rcMeta.endTime}`}>
+                  · {rcMeta.name} <span className="text-text-muted-alt">[{rcMeta.status}]</span>
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="text-text-muted">not configured</span>
+              <button
+                onClick={() => setRcConfigOpen(true)}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-text-muted-alt hover:border-accent-blue"
+              >
+                Configure
+              </button>
+            </>
+          )}
+        </div>
+        {rcError && (
+          <div className="mt-1 font-mono text-[10px] text-live-red">
+            {rcError}
+            <button className="ml-2 underline" onClick={() => setRcError(null)}>dismiss</button>
+          </div>
+        )}
+      </div>
+
+      {rcConfigOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-[420px] rounded border border-border-subtle bg-bg-panel p-4 font-mono text-xs text-text-muted-alt shadow-lg">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <Cloud className="h-4 w-4 text-accent-blue-bright" />
+              Configure Rundown Studio
+            </div>
+            <label className="mb-2 flex flex-col gap-1 text-[10px] text-text-muted">
+              API token
+              <input
+                type="password"
+                value={rcTokenInput}
+                onChange={(e) => setRcTokenInput(e.target.value)}
+                placeholder="Bearer token from your Rundown Studio dashboard"
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs text-text-muted-alt outline-none focus:border-accent-blue"
+              />
+            </label>
+            <label className="mb-3 flex flex-col gap-1 text-[10px] text-text-muted">
+              Rundown ID (20 characters)
+              <input
+                type="text"
+                value={rcRundownIdInput}
+                onChange={(e) => setRcRundownIdInput(e.target.value)}
+                placeholder="e.g. aBcDeFgHiJkLmNoPqRsT"
+                maxLength={20}
+                className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-xs font-mono text-text-muted-alt outline-none focus:border-accent-blue"
+              />
+            </label>
+            <div className="mb-3 rounded bg-bg-surface/60 px-2 py-1 text-[10px] text-text-muted">
+              Token stays on this machine — the sidecar (Rust) holds it, and it's never
+              sent back to the UI. Rundown ID is validated as 20-char alphanumeric before save.
+            </div>
+            {rcError && <div className="mb-2 text-[10px] text-live-red">{rcError}</div>}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setRcConfigOpen(false)}
+                className="rounded px-3 py-1 text-[11px] text-text-muted hover:text-text-muted-alt"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={rcSaveConfig}
+                disabled={!rcTokenInput.trim() || rcRundownIdInput.trim().length !== 20}
+                className="rounded border border-accent-blue bg-accent-blue/30 px-3 py-1 text-[11px] font-semibold text-accent-blue-bright hover:bg-accent-blue/50 disabled:opacity-30"
+              >
+                Save
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
