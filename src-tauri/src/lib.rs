@@ -1321,7 +1321,8 @@ pub fn run() {
             rundowncloud::fetch_rundowncloud_cues,
             mos::get_mos_status,
             mos::set_mos_config,
-            mos::restart_mos_server
+            mos::restart_mos_server,
+            mos::send_mos_item_cue
         ])
         .setup(move |app| {
             // The assets dir needs the app handle to resolve, so AppState is

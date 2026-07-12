@@ -65,6 +65,9 @@ jobs:
       - name: Phase 10.1 verification
         run: bun run scripts/verify-phase10_1.ts
 
+      - name: Phase 10.2 verification
+        run: bun run scripts/verify-phase10_2.ts
+
   verify-rust:
     name: Rust (cargo check + tests)
     runs-on: ubuntu-latest

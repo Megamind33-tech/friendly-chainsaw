@@ -332,6 +332,69 @@ pub fn build_heartbeat_ack(message_id: &str, mos_id: &str, ncs_id: &str) -> Vec<
     out
 }
 
+/// Minimal XML text escape covering exactly the characters that break
+/// the MOS wire format when embedded in an element body. Not general-
+/// purpose: MOS ids and slugs never contain HTML entities in practice,
+/// but a slug with an ampersand or angle bracket would otherwise
+/// invalidate the emitted XML and get rejected by the NCS.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\'' => out.push_str("&apos;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Phase 10.2: build a `roAck` reply for a specific inbound message. Sent
+/// back to the same NCS on the same connection after every non-heartbeat
+/// message that carried a parseable `roID`. `status` is `"OK"` on
+/// successful ingest; other strings are error codes if we ever surface
+/// a specific rejection.
+pub fn build_ro_ack(message_id: &str, mos_id: &str, ncs_id: &str, ro_id: &str, status: &str) -> Vec<u8> {
+    let xml = format!(
+        r#"<mos><mosID>{mos}</mosID><ncsID>{ncs}</ncsID><messageID>{mid}</messageID><roAck><roID>{roid}</roID><roStatus>{st}</roStatus></roAck></mos>"#,
+        mos = xml_escape(mos_id),
+        ncs = xml_escape(ncs_id),
+        mid = xml_escape(message_id),
+        roid = xml_escape(ro_id),
+        st = xml_escape(status),
+    );
+    let mut out = xml.into_bytes();
+    out.push(0);
+    out
+}
+
+/// Phase 10.2: build a `roItemCue` message signalling "this cue is going
+/// to air". Fired when the operator takes a rundown item whose external
+/// id starts with `mos:`. See docs/PHASE10_2_DESIGN.md for the
+/// story-vs-item disclaimer.
+pub fn build_ro_item_cue(
+    message_id: &str,
+    mos_id: &str,
+    ncs_id: &str,
+    ro_id: &str,
+    story_id: &str,
+) -> Vec<u8> {
+    let xml = format!(
+        r#"<mos><mosID>{mos}</mosID><ncsID>{ncs}</ncsID><messageID>{mid}</messageID><roItemCue><roID>{roid}</roID><storyID>{sid}</storyID></roItemCue></mos>"#,
+        mos = xml_escape(mos_id),
+        ncs = xml_escape(ncs_id),
+        mid = xml_escape(message_id),
+        roid = xml_escape(ro_id),
+        sid = xml_escape(story_id),
+    );
+    let mut out = xml.into_bytes();
+    out.push(0);
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Persisted settings + Tauri commands
 // ---------------------------------------------------------------------------
@@ -433,8 +496,25 @@ const MAX_FRAME_BYTES: usize = 128 * 1024;
 /// Runtime handle for the running listener — dropping this cancels the
 /// accept loop (its `Notify` is triggered on shutdown). Stored in Tauri
 /// state so the restart command can swap it atomically.
+///
+/// Phase 10.2: `outbound_tx` is the broadcast sender live connections
+/// subscribe to. Every subscribed writer forwards each published frame
+/// to its socket, so `send_mos_item_cue` reaches every NCS at once.
 pub struct MosServerHandle {
     shutdown: Arc<Notify>,
+    outbound_tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+    our_mos_id: String,
+    /// Most recently seen `roID` from an inbound MOS message. Populated
+    /// on every parseable message; read by `send_mos_item_cue` so the
+    /// JS side can pass `story_id` alone. Not perfect if the operator
+    /// juggles two NCSes with different rundowns simultaneously, but
+    /// that's not a real workflow — same-rundown as the last-inbound
+    /// is the operator's mental model.
+    last_ro_id: Arc<Mutex<Option<String>>>,
+    /// Monotonic message id for BGE-originated frames. Starts at 7000 to
+    /// avoid overlapping the small integers NCS typically uses. Wraps
+    /// at u32::MAX which we'll never realistically reach.
+    next_msg_id: Arc<std::sync::atomic::AtomicU32>,
 }
 
 pub type MosServerState = Arc<Mutex<Option<MosServerHandle>>>;
@@ -524,87 +604,139 @@ async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
     our_mos_id: String,
+    ncs_display_id: Arc<Mutex<String>>,
     expected_ncs_id: Option<String>,
+    outbound_rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    last_ro_id: Arc<Mutex<Option<String>>>,
     app: AppHandle,
 ) {
     let (mut reader, mut writer) = stream.split();
     let mut buf = Vec::with_capacity(4096);
     let mut chunk = [0u8; 4096];
     let mut rate = RateWindow::new();
+    let mut outbound_rx = outbound_rx;
 
     loop {
-        let n = match reader.read(&mut chunk).await {
-            Ok(0) => {
-                eprintln!("mos: {peer} closed connection");
-                return;
-            }
-            Ok(n) => n,
-            Err(e) => {
-                eprintln!("mos: read from {peer} failed: {e}");
-                return;
-            }
-        };
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.len() > MAX_FRAME_BYTES {
-            eprintln!("mos: {peer} frame exceeded {MAX_FRAME_BYTES} bytes without terminator; dropping");
-            return;
-        }
-
-        // Split by null terminators — a single read may contain multiple
-        // messages or a partial one.
-        while let Some(pos) = buf.iter().position(|&b| b == 0) {
-            let frame: Vec<u8> = buf.drain(..=pos).collect();
-            let payload = &frame[..frame.len() - 1]; // strip trailing \x00
-
-            if !rate.check_and_record() {
-                eprintln!("mos: {peer} exceeded {MAX_MSGS_PER_SEC} msg/sec — dropping connection");
-                return;
-            }
-
-            let msg = match parse_mos_message(payload) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("mos: parse error from {peer}: {e}");
-                    continue;
-                }
-            };
-
-            // Heartbeat: ACK inline. NRCS expects a heartbeat back with
-            // the same messageID within a short window or it may close
-            // the connection.
-            if let MosMessage::Heartbeat { message_id } = &msg {
-                let ack = build_heartbeat_ack(message_id, &our_mos_id, "");
-                if let Err(e) = writer.write_all(&ack).await {
-                    eprintln!("mos: heartbeat ACK to {peer} failed: {e}");
-                    return;
-                }
-                // Don't emit heartbeat events to JS — they'd flood the
-                // control bridge and carry no operator-visible info.
-                continue;
-            }
-
-            // MosID handshake: if we have an expected NCS ID configured
-            // and this connection's ID doesn't match, close the socket.
-            // Prevents an accidental cross-connect to the wrong newsroom.
-            if let MosMessage::MosId { ncs_id, .. } = &msg {
-                if let Some(expected) = &expected_ncs_id {
-                    if ncs_id != expected {
-                        eprintln!("mos: {peer} MosID ncsID '{ncs_id}' does not match expected '{expected}' — closing");
+        tokio::select! {
+            // Outbound broadcast — forward every published frame to this
+            // socket. A single receiver going Lagged (a slow NCS falling
+            // behind) skips ahead to the newest frame, matching the
+            // semantics we want (as-run signals reflect the operator's
+            // latest take, not a stale one).
+            outbound = outbound_rx.recv() => match outbound {
+                Ok(frame) => {
+                    if let Err(e) = writer.write_all(&frame).await {
+                        eprintln!("mos: outbound write to {peer} failed: {e}");
                         return;
                     }
                 }
-            }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("mos: {peer} lagged {n} outbound frames — skipping ahead");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    // The server is shutting down; other side of select
+                    // will handle it.
+                }
+            },
 
-            // Everything else: emit to JS. Serialize the message enum via
-            // its own Serialize impl (camelCase, tag on discriminant).
-            let event = MosMessageEvent {
-                role: role_of(&msg).to_string(),
-                message_id: message_id_of(&msg),
-                ro_id: ro_id_of(&msg),
-                data: serde_json::to_value(&msg).unwrap_or(serde_json::Value::Null),
-            };
-            if let Err(e) = app.emit("mos:message", event) {
-                eprintln!("mos: emit failed: {e}");
+            // Inbound bytes from the NCS.
+            read = reader.read(&mut chunk) => {
+                let n = match read {
+                    Ok(0) => {
+                        eprintln!("mos: {peer} closed connection");
+                        return;
+                    }
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("mos: read from {peer} failed: {e}");
+                        return;
+                    }
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > MAX_FRAME_BYTES {
+                    eprintln!("mos: {peer} frame exceeded {MAX_FRAME_BYTES} bytes without terminator; dropping");
+                    return;
+                }
+
+                while let Some(pos) = buf.iter().position(|&b| b == 0) {
+                    let frame: Vec<u8> = buf.drain(..=pos).collect();
+                    let payload = &frame[..frame.len() - 1]; // strip trailing \x00
+
+                    if !rate.check_and_record() {
+                        eprintln!("mos: {peer} exceeded {MAX_MSGS_PER_SEC} msg/sec — dropping connection");
+                        return;
+                    }
+
+                    let msg = match parse_mos_message(payload) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            eprintln!("mos: parse error from {peer}: {e}");
+                            continue;
+                        }
+                    };
+
+                    // Heartbeat: ACK inline.
+                    if let MosMessage::Heartbeat { message_id } = &msg {
+                        let ack = build_heartbeat_ack(message_id, &our_mos_id, "");
+                        if let Err(e) = writer.write_all(&ack).await {
+                            eprintln!("mos: heartbeat ACK to {peer} failed: {e}");
+                            return;
+                        }
+                        continue;
+                    }
+
+                    // MosID handshake: remember the connection's ncsID
+                    // so outbound frames carry the right value; reject if
+                    // it doesn't match an operator-configured expectation.
+                    if let MosMessage::MosId { ncs_id, .. } = &msg {
+                        if let Some(expected) = &expected_ncs_id {
+                            if ncs_id != expected {
+                                eprintln!(
+                                    "mos: {peer} MosID ncsID '{ncs_id}' does not match expected '{expected}' — closing"
+                                );
+                                return;
+                            }
+                        }
+                        if let Ok(mut guard) = ncs_display_id.lock() {
+                            *guard = ncs_id.clone();
+                        }
+                    }
+
+                    // Phase 10.2: auto-ACK every message that carried a
+                    // parseable roID. Silent for messages without an roID
+                    // (mosID handshake, unhandled meta) — nothing to ack.
+                    if let Some(ro_id) = ro_id_of(&msg) {
+                        if let Ok(mut guard) = last_ro_id.lock() {
+                            *guard = Some(ro_id.clone());
+                        }
+                        let ncs_display = ncs_display_id
+                            .lock()
+                            .ok()
+                            .map(|g| g.clone())
+                            .unwrap_or_default();
+                        let ack = build_ro_ack(
+                            &message_id_of(&msg),
+                            &our_mos_id,
+                            &ncs_display,
+                            &ro_id,
+                            "OK",
+                        );
+                        if let Err(e) = writer.write_all(&ack).await {
+                            eprintln!("mos: roAck to {peer} failed: {e}");
+                            return;
+                        }
+                    }
+
+                    let event = MosMessageEvent {
+                        role: role_of(&msg).to_string(),
+                        message_id: message_id_of(&msg),
+                        ro_id: ro_id_of(&msg),
+                        data: serde_json::to_value(&msg).unwrap_or(serde_json::Value::Null),
+                    };
+                    if let Err(e) = app.emit("mos:message", event) {
+                        eprintln!("mos: emit failed: {e}");
+                    }
+                }
             }
         }
     }
@@ -626,6 +758,14 @@ pub async fn spawn_mos_server(app: AppHandle, settings: MosSettingsFile) -> Resu
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = shutdown.clone();
+    // Capacity 32 — as-run signals fire once per operator take, well
+    // under 32/sec even in aggressive playout; Lagged just skips ahead.
+    let (outbound_tx, _) = tokio::sync::broadcast::channel::<Vec<u8>>(32);
+    let outbound_for_accept = outbound_tx.clone();
+    let last_ro_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let last_ro_id_for_accept = last_ro_id.clone();
+    let next_msg_id = Arc::new(std::sync::atomic::AtomicU32::new(7000));
+    let our_mos_id_for_handle = our_mos_id.clone();
 
     tokio::spawn(async move {
         let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -649,9 +789,18 @@ pub async fn spawn_mos_server(app: AppHandle, settings: MosSettingsFile) -> Resu
                             let our_mos_id = our_mos_id.clone();
                             let expected = expected_ncs_id.clone();
                             let app_h = app.clone();
+                            let outbound_rx = outbound_for_accept.subscribe();
+                            let last_ro_id_conn = last_ro_id_for_accept.clone();
+                            // Per-connection display copy of the ncsID
+                            // for outbound frames (filled in on the mosID
+                            // handshake).
+                            let ncs_display = Arc::new(Mutex::new(String::new()));
                             tokio::spawn(async move {
                                 eprintln!("mos: {peer} connected");
-                                handle_connection(stream, peer, our_mos_id, expected, app_h).await;
+                                handle_connection(
+                                    stream, peer, our_mos_id, ncs_display, expected,
+                                    outbound_rx, last_ro_id_conn, app_h,
+                                ).await;
                                 live_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                             });
                         }
@@ -665,7 +814,13 @@ pub async fn spawn_mos_server(app: AppHandle, settings: MosSettingsFile) -> Resu
         }
     });
 
-    Ok(MosServerHandle { shutdown })
+    Ok(MosServerHandle {
+        shutdown,
+        outbound_tx,
+        our_mos_id: our_mos_id_for_handle,
+        last_ro_id,
+        next_msg_id,
+    })
 }
 
 /// Startup path: read settings, spawn if enabled. Called once from
@@ -688,6 +843,56 @@ pub fn maybe_start_mos_server(app: AppHandle, assets_dir: &Path, state: MosServe
             Err(e) => eprintln!("mos: server failed to start: {e}"),
         }
     });
+}
+
+/// Phase 10.2: send an outbound `roItemCue` to every active MOS
+/// connection. `ro_id` may be empty — in that case we substitute the
+/// last-seen inbound roID (which is the operator's mental model, "same
+/// rundown as the last one that came in").
+///
+/// Returns `true` if at least one connection was subscribed at the moment
+/// the frame was published. Never errors on "no listeners" — that's the
+/// honest behavior of an as-run feed with nobody plugged in yet.
+#[tauri::command]
+pub fn send_mos_item_cue(
+    ro_id: String,
+    story_id: String,
+    state: tauri::State<MosServerState>,
+) -> Result<bool, String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    let Some(handle) = guard.as_ref() else {
+        return Ok(false); // server not running — silent no-op
+    };
+    let effective_ro_id = if ro_id.trim().is_empty() {
+        handle
+            .last_ro_id
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_default()
+    } else {
+        ro_id
+    };
+    if effective_ro_id.is_empty() || story_id.trim().is_empty() {
+        return Err("ro_id and story_id are required".into());
+    }
+    let msg_id = handle
+        .next_msg_id
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let frame = build_ro_item_cue(
+        &msg_id.to_string(),
+        &handle.our_mos_id,
+        "",
+        &effective_ro_id,
+        &story_id,
+    );
+    // send() returns Ok(usize) with the number of active receivers, or
+    // Err when there are none — we translate that into a bool for the
+    // caller and never propagate as an error.
+    match handle.outbound_tx.send(frame) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
 }
 
 /// Restart the listener with the currently-persisted settings. Called by
@@ -873,6 +1078,77 @@ mod tests {
         } else {
             panic!("expected RoCreate");
         }
+    }
+
+    // Phase 10.2 — outbound builder tests.
+
+    #[test]
+    fn ro_ack_has_null_terminator_and_status() {
+        let bytes = build_ro_ack("42", "bge.local", "NCS1", "RO001", "OK");
+        assert_eq!(*bytes.last().unwrap(), 0u8);
+        let s = std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap();
+        assert!(s.contains("<messageID>42</messageID>"));
+        assert!(s.contains("<mosID>bge.local</mosID>"));
+        assert!(s.contains("<ncsID>NCS1</ncsID>"));
+        assert!(s.contains("<roAck>"));
+        assert!(s.contains("<roID>RO001</roID>"));
+        assert!(s.contains("<roStatus>OK</roStatus>"));
+    }
+
+    #[test]
+    fn ro_ack_survives_parser_as_unhandled() {
+        // Sanity: our own outbound frames are well-formed enough that the
+        // inbound parser accepts them (a small station using two BGEs
+        // would have one BGE receiving the other's roAck). roAck is not
+        // a role we handle, so it lands as Unhandled — the point is that
+        // parsing doesn't fail on our own emission.
+        let bytes = build_ro_ack("42", "bge.local", "NCS1", "RO001", "OK");
+        let payload = &bytes[..bytes.len() - 1];
+        let m = parse_mos_message(payload).expect("valid XML from our builder");
+        match m {
+            MosMessage::Unhandled { role_name, .. } => assert_eq!(role_name, "roAck"),
+            other => panic!("expected Unhandled('roAck'), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ro_item_cue_has_null_terminator_and_fields() {
+        let bytes = build_ro_item_cue("7001", "bge.local", "NCS1", "RO001", "STORY01");
+        assert_eq!(*bytes.last().unwrap(), 0u8);
+        let s = std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap();
+        assert!(s.contains("<messageID>7001</messageID>"));
+        assert!(s.contains("<roItemCue>"));
+        assert!(s.contains("<roID>RO001</roID>"));
+        assert!(s.contains("<storyID>STORY01</storyID>"));
+    }
+
+    #[test]
+    fn ro_item_cue_survives_parser_as_unhandled() {
+        let bytes = build_ro_item_cue("7002", "bge.local", "NCS1", "RO001", "STORY_XYZ");
+        let payload = &bytes[..bytes.len() - 1];
+        let m = parse_mos_message(payload).expect("valid XML");
+        match m {
+            MosMessage::Unhandled { role_name, .. } => assert_eq!(role_name, "roItemCue"),
+            other => panic!("expected Unhandled('roItemCue'), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn xml_escape_covers_wire_hostile_chars() {
+        assert_eq!(xml_escape("a & b"), "a &amp; b");
+        assert_eq!(xml_escape("<x>"), "&lt;x&gt;");
+        assert_eq!(xml_escape("she said \"hi\""), "she said &quot;hi&quot;");
+        assert_eq!(xml_escape("it's ok"), "it&apos;s ok");
+    }
+
+    #[test]
+    fn ro_ack_escapes_status_and_ids() {
+        // A slug with an ampersand (real: "Story A & B") must not
+        // invalidate the XML emitted for it — the parser round-trip is
+        // proof.
+        let bytes = build_ro_ack("1", "bge", "NCS", "RO&1", "OK");
+        let payload = &bytes[..bytes.len() - 1];
+        assert!(parse_mos_message(payload).is_ok(), "escaped roID parses");
     }
 
     #[test]

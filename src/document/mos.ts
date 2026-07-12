@@ -27,3 +27,15 @@ export function setMosConfig(config: {
 }): Promise<void> {
   return invoke<void>("set_mos_config", config);
 }
+
+/**
+ * Phase 10.2 — send an outbound `roItemCue` frame to every active MOS
+ * connection. Empty `roId` → Rust falls back to the most recently seen
+ * inbound roID (operator mental model: "same rundown as the last one
+ * that came in"). Returns `true` if at least one connection was
+ * subscribed at publish time; `false` is not an error, just "nobody
+ * listening" — mirrors the design in docs/PHASE10_2_DESIGN.md.
+ */
+export function sendMosItemCue(roId: string, storyId: string): Promise<boolean> {
+  return invoke<boolean>("send_mos_item_cue", { roId, storyId });
+}

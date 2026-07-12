@@ -47,6 +47,15 @@ export const AUTOMATION_COMPARISON_OPS = ["==", "!=", ">", "<", ">=", "<="] as c
 export type AutomationComparisonOp = (typeof AUTOMATION_COMPARISON_OPS)[number];
 
 /**
+ * Phase 10.2 — group combinators for composable conditions. Deliberately
+ * only two variants (no XOR, no NOT-of-group) — extending this without a
+ * real operator use case adds UI complexity for imagined power. Empty-
+ * group semantics: `all_of[] = true`, `any_of[] = false` (matches Rego,
+ * K8s label selectors, and vacuous-truth math).
+ */
+export type AutomationConditionGroupKind = "all_of" | "any_of";
+
+/**
  * Whitelisted field names from ControlStateSnapshot that a condition can
  * reference. Anything else is refused at save time. Prevents an operator
  * from writing a condition against a field that doesn't exist and getting
@@ -74,10 +83,30 @@ export const AUTOMATION_CONDITION_FIELDS = [
 
 export type AutomationConditionField = (typeof AUTOMATION_CONDITION_FIELDS)[number];
 
-export interface AutomationCondition {
+/**
+ * Leaf condition — one whitelisted field, one operator, one literal.
+ * Phase 10 shipped this as `AutomationCondition`; Phase 10.2 renames the
+ * leaf shape to `AutomationLeafCondition` and makes `AutomationCondition`
+ * a union of leaf + group.
+ */
+export interface AutomationLeafCondition {
   field: AutomationConditionField;
   op: AutomationComparisonOp;
   value: string | number | boolean;
+}
+
+export interface AutomationConditionGroup {
+  kind: AutomationConditionGroupKind;
+  /** Only leaves; nested groups are forbidden by design. */
+  conditions: AutomationLeafCondition[];
+}
+
+export type AutomationCondition = AutomationLeafCondition | AutomationConditionGroup;
+
+/** Type guard: is this a group (has a `kind` field) rather than a leaf? */
+export function isConditionGroup(c: AutomationCondition): c is AutomationConditionGroup {
+  return (c as AutomationConditionGroup).kind === "all_of" ||
+    (c as AutomationConditionGroup).kind === "any_of";
 }
 
 export interface AutomationAction {
@@ -123,13 +152,39 @@ export function validateRule(rule: AutomationRule): void {
     }
   }
   if (rule.condition) {
-    if (!AUTOMATION_CONDITION_FIELDS.includes(rule.condition.field)) {
-      throw new Error(`condition field not in whitelist: ${rule.condition.field}`);
-    }
-    if (!AUTOMATION_COMPARISON_OPS.includes(rule.condition.op)) {
-      throw new Error(`unknown condition op: ${rule.condition.op}`);
-    }
+    validateConditionShallow(rule.condition);
   }
+}
+
+function validateLeafCondition(c: AutomationLeafCondition): void {
+  if (!AUTOMATION_CONDITION_FIELDS.includes(c.field)) {
+    throw new Error(`condition field not in whitelist: ${c.field}`);
+  }
+  if (!AUTOMATION_COMPARISON_OPS.includes(c.op)) {
+    throw new Error(`unknown condition op: ${c.op}`);
+  }
+}
+
+/**
+ * One level of validation only — a group may contain leaves, never
+ * nested groups. TypeScript's type shape already forbids it at the
+ * point of construction; this is the runtime guard for values coming
+ * from persisted localStorage or a future migration.
+ */
+export function validateConditionShallow(c: AutomationCondition): void {
+  if (isConditionGroup(c)) {
+    if (!Array.isArray(c.conditions)) {
+      throw new Error(`group ${c.kind}: conditions must be an array`);
+    }
+    for (const leaf of c.conditions) {
+      if (isConditionGroup(leaf as AutomationCondition)) {
+        throw new Error(`nested groups are not allowed (${c.kind} contains a group)`);
+      }
+      validateLeafCondition(leaf);
+    }
+    return;
+  }
+  validateLeafCondition(c);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +195,30 @@ export function validateRule(rule: AutomationRule): void {
 
 export function evalCondition(
   cond: AutomationCondition,
+  snapshot: Record<string, unknown>,
+): boolean {
+  if (isConditionGroup(cond)) {
+    // Empty groups: all_of[] = true (vacuous truth), any_of[] = false.
+    // Documented in docs/PHASE10_2_DESIGN.md.
+    if (cond.conditions.length === 0) return cond.kind === "all_of";
+    if (cond.kind === "all_of") {
+      // Short-circuit on first false.
+      for (const c of cond.conditions) {
+        if (!evalLeafCondition(c, snapshot)) return false;
+      }
+      return true;
+    }
+    // any_of: short-circuit on first true.
+    for (const c of cond.conditions) {
+      if (evalLeafCondition(c, snapshot)) return true;
+    }
+    return false;
+  }
+  return evalLeafCondition(cond, snapshot);
+}
+
+function evalLeafCondition(
+  cond: AutomationLeafCondition,
   snapshot: Record<string, unknown>,
 ): boolean {
   const lhs = snapshot[cond.field];

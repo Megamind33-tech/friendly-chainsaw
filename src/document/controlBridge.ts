@@ -11,6 +11,7 @@ import {
   applyMosStoryMove,
   applyMosStorySend,
   type MosStoryLike,
+  type ProgramItem,
 } from "./playout";
 import type { ControlCommand, ControlStateSnapshot } from "./controlProtocol";
 import {
@@ -19,6 +20,7 @@ import {
   shouldTimerFire,
   type AutomationRule,
 } from "./automation";
+import { sendMosItemCue } from "./mos";
 
 /**
  * Phase 7 control bridge — the single point of contact between the
@@ -259,6 +261,24 @@ export function useControlBridge(): void {
       // object flattener carries `string | null` for these two.
       prevProgramSceneId = snap.programSceneId as string | null;
       prevCurrentItemId = snap.currentItemId as string | null;
+
+      // Phase 10.2 — send an outbound MOS roItemCue whenever a
+      // MOS-imported item goes on air. Detected by externalId prefix.
+      // Silent no-op when no MOS server is running (Rust returns false).
+      if (itemStart && snap.currentItemId) {
+        const items = usePlayoutStore.getState().items;
+        const currentItem: ProgramItem | undefined = items.find(
+          (i) => i.id === snap.currentItemId,
+        );
+        if (currentItem?.externalId?.startsWith("mos:")) {
+          const storyId = currentItem.externalId.slice("mos:".length);
+          // Empty ro_id lets the Rust side use its last-seen inbound
+          // roID — the operator's mental model.
+          void sendMosItemCue("", storyId).catch(() => {
+            /* no server or IPC not available — silent */
+          });
+        }
+      }
 
       const rules = useAutomationStore.getState().rules;
       for (const rule of rules) {

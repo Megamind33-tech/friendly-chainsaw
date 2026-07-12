@@ -3,6 +3,7 @@ import { Zap, Plus, Trash2, AlertTriangle } from "lucide-react";
 import {
   useAutomationStore,
   newRuleId,
+  isConditionGroup,
   AUTOMATION_TRIGGER_KINDS,
   AUTOMATION_COMPARISON_OPS,
   AUTOMATION_CONDITION_FIELDS,
@@ -13,6 +14,9 @@ import {
   type AutomationComparisonOp,
   type AutomationConditionField,
   type AutomationAction,
+  type AutomationLeafCondition,
+  type AutomationCondition,
+  type AutomationConditionGroupKind,
 } from "@/document/automation";
 import { CONTROL_COMMAND_TYPES, type ControlCommandType } from "@/document/controlProtocol";
 
@@ -234,80 +238,10 @@ export function AutomationPanel() {
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wide text-text-muted">Condition</span>
-                  <label className="text-[10px] text-text-muted">
-                    <input
-                      type="checkbox"
-                      checked={!!selected.condition}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          handleUpdate({
-                            condition: { field: "onAir", op: "==", value: true },
-                          });
-                        } else {
-                          handleUpdate({ condition: undefined });
-                        }
-                      }}
-                      className="mr-1"
-                    />
-                    enabled
-                  </label>
-                </div>
-                {selected.condition && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={selected.condition.field}
-                      onChange={(e) =>
-                        handleUpdate({
-                          condition: {
-                            ...selected.condition!,
-                            field: e.target.value as AutomationConditionField,
-                          },
-                        })
-                      }
-                      className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
-                    >
-                      {AUTOMATION_CONDITION_FIELDS.map((f) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={selected.condition.op}
-                      onChange={(e) =>
-                        handleUpdate({
-                          condition: {
-                            ...selected.condition!,
-                            op: e.target.value as AutomationComparisonOp,
-                          },
-                        })
-                      }
-                      className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
-                    >
-                      {AUTOMATION_COMPARISON_OPS.map((op) => (
-                        <option key={op} value={op}>{op}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={String(selected.condition.value)}
-                      onChange={(e) => {
-                        // Try number/bool coercion — falls back to string.
-                        const raw = e.target.value;
-                        let coerced: string | number | boolean = raw;
-                        if (raw === "true") coerced = true;
-                        else if (raw === "false") coerced = false;
-                        else if (raw !== "" && !Number.isNaN(Number(raw))) coerced = Number(raw);
-                        handleUpdate({
-                          condition: { ...selected.condition!, value: coerced },
-                        });
-                      }}
-                      className="w-32 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
-                    />
-                  </div>
-                )}
-              </div>
+              <ConditionEditor
+                condition={selected.condition}
+                onChange={(condition) => handleUpdate({ condition })}
+              />
 
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -391,3 +325,167 @@ export function AutomationPanel() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Condition tree editor — Phase 10.2. Depth-1 nesting max: root is either
+// a single leaf or an all_of/any_of group with leaf children.
+// ---------------------------------------------------------------------------
+
+const emptyLeaf = (): AutomationLeafCondition => ({ field: "onAir", op: "==", value: true });
+
+function coerceValueText(raw: string): string | number | boolean {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw !== "" && !Number.isNaN(Number(raw))) return Number(raw);
+  return raw;
+}
+
+interface ConditionEditorProps {
+  condition: AutomationCondition | undefined;
+  onChange: (next: AutomationCondition | undefined) => void;
+}
+
+function ConditionEditor({ condition, onChange }: ConditionEditorProps) {
+  // The "shape" dropdown is the operator's model: "no condition" |
+  // "single clause" | "all of..." | "any of...". Behind it, undefined
+  // vs leaf vs group.
+  const currentShape: "off" | "single" | "all_of" | "any_of" = !condition
+    ? "off"
+    : isConditionGroup(condition)
+      ? condition.kind
+      : "single";
+
+  const setShape = (shape: "off" | "single" | "all_of" | "any_of") => {
+    if (shape === "off") return onChange(undefined);
+    if (shape === "single") {
+      const leaf = condition && !isConditionGroup(condition) ? condition : emptyLeaf();
+      return onChange(leaf);
+    }
+    // Group. Reuse existing clauses if we're switching combinator; else
+    // seed with one leaf so the operator sees an editable row.
+    const existing =
+      condition && isConditionGroup(condition) ? condition.conditions : condition ? [condition] : [emptyLeaf()];
+    onChange({ kind: shape, conditions: existing });
+  };
+
+  const updateGroupClause = (idx: number, next: AutomationLeafCondition) => {
+    if (!condition || !isConditionGroup(condition)) return;
+    const conditions = condition.conditions.map((c, i) => (i === idx ? next : c));
+    onChange({ ...condition, conditions });
+  };
+
+  const addGroupClause = () => {
+    if (!condition || !isConditionGroup(condition)) return;
+    onChange({ ...condition, conditions: [...condition.conditions, emptyLeaf()] });
+  };
+
+  const removeGroupClause = (idx: number) => {
+    if (!condition || !isConditionGroup(condition)) return;
+    const conditions = condition.conditions.filter((_, i) => i !== idx);
+    onChange({ ...condition, conditions });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-text-muted">Condition</span>
+        <select
+          value={currentShape}
+          onChange={(e) => setShape(e.target.value as typeof currentShape)}
+          className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+        >
+          <option value="off">no condition</option>
+          <option value="single">single clause</option>
+          <option value="all_of">all of…</option>
+          <option value="any_of">any of…</option>
+        </select>
+        {condition && isConditionGroup(condition) && (
+          <button
+            onClick={addGroupClause}
+            className="ml-auto flex items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 text-[10px] text-text-muted-alt hover:border-accent-blue"
+          >
+            <Plus className="h-3 w-3" /> Add clause
+          </button>
+        )}
+      </div>
+
+      {condition && !isConditionGroup(condition) && (
+        <LeafEditor
+          leaf={condition}
+          onChange={onChange}
+          onRemove={undefined}
+        />
+      )}
+
+      {condition && isConditionGroup(condition) && (
+        <div className="space-y-1">
+          {condition.conditions.length === 0 && (
+            <div className="text-[9px] text-text-muted">
+              Empty group — {condition.kind === "all_of" ? "evaluates true (vacuous truth)" : "evaluates false"}.
+              Add a clause to gate the trigger.
+            </div>
+          )}
+          {condition.conditions.map((leaf, i) => (
+            <LeafEditor
+              key={i}
+              leaf={leaf}
+              onChange={(next) => updateGroupClause(i, next)}
+              onRemove={() => removeGroupClause(i)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface LeafEditorProps {
+  leaf: AutomationLeafCondition;
+  onChange: (next: AutomationLeafCondition) => void;
+  onRemove: (() => void) | undefined;
+}
+
+function LeafEditor({ leaf, onChange, onRemove }: LeafEditorProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-border-subtle bg-bg-surface/40 p-2">
+      <select
+        value={leaf.field}
+        onChange={(e) => onChange({ ...leaf, field: e.target.value as AutomationConditionField })}
+        className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+      >
+        {AUTOMATION_CONDITION_FIELDS.map((f) => (
+          <option key={f} value={f}>{f}</option>
+        ))}
+      </select>
+      <select
+        value={leaf.op}
+        onChange={(e) => onChange({ ...leaf, op: e.target.value as AutomationComparisonOp })}
+        className="rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+      >
+        {AUTOMATION_COMPARISON_OPS.map((op) => (
+          <option key={op} value={op}>{op}</option>
+        ))}
+      </select>
+      <input
+        type="text"
+        value={String(leaf.value)}
+        onChange={(e) => onChange({ ...leaf, value: coerceValueText(e.target.value) })}
+        className="w-32 rounded border border-border-subtle bg-bg-surface px-2 py-1 text-[11px] text-text-muted-alt outline-none focus:border-accent-blue"
+      />
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="ml-auto text-text-muted hover:text-live-red"
+          title="Remove clause"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// The AutomationConditionGroupKind is exported from the store module; we
+// import it above to keep the shape editor's types honest, even if the
+// UI here only pattern-matches on the four string literals.
+void (null as unknown as AutomationConditionGroupKind);

@@ -529,6 +529,34 @@ actions: [ take, startRecord ]
 - MOS `mosObj*` asset sync (still separate).
 - Composable conditions (AND/OR chains) — multi-action gives operators the most-common ask; complex conditions can wait for a real use case.
 
+## Phase 10.2 — MOS outbound + composable conditions — COMPLETE (2026-07-11)
+
+Two additions closing the MOS half-duplex gap and giving automation rules multi-clause conditions. Design in [`docs/PHASE10_2_DESIGN.md`](docs/PHASE10_2_DESIGN.md).
+
+**MOS outbound (`src-tauri/src/mos.rs`, +190 lines + 6 unit tests):** three new XML builders — `build_ro_ack`, `build_ro_item_cue`, `xml_escape`. Every parseable inbound MOS message with an `roID` now triggers an outbound `roAck` on the same connection (spec-mandated behavior we skipped in 10.1 — some NCS tolerated the silence, others may not). Every operator take of a rundown item whose `externalId` starts with `mos:` fires a `roItemCue` frame carrying the story id. Routing: each active connection subscribes to a per-server `tokio::sync::broadcast::channel<Vec<u8>>` at accept time; the new `send_mos_item_cue` Tauri command publishes once, every subscribed writer forwards to its socket. Multiple NCSes plugged in → all get notified; zero connected → silent no-op (broadcast tolerates no receivers, no error propagates). Outbound message ids come from a monotonic per-server counter starting at 7000 to stay outside typical NCS ranges. `MosServerHandle` gained the broadcast sender, an `Arc<Mutex<Option<String>>>` for the last-seen `roID` (JS may pass an empty `ro_id` and Rust substitutes the last inbound one — the operator's "same rundown as the last take" mental model), and an atomic `next_msg_id`. `MosMessage::MosId` also latches a per-connection `ncs_display` string used to fill the `<ncsID>` element in outbound frames.
+
+**XML escape**: `xml_escape()` covers `& < > ' "` — the exact set that would break a slug with an ampersand ("Story A & B") or an id with an angle bracket. Both outbound builders escape every user-supplied field. Round-trip proof: our own outbound frames re-parse through `parse_mos_message` as `Unhandled { role_name: "roAck" | "roItemCue" }` — meaning the XML is well-formed enough that an NCS's parser will accept it, and if a second BGE instance sees these frames it doesn't crash.
+
+**Composable conditions (`src/document/automation.ts`):** `AutomationCondition` widens from a single interface to a union: `AutomationLeafCondition | AutomationConditionGroup` where the group carries a `kind: "all_of" | "any_of"` and a leaves-only `conditions` array. Deliberately no nested groups — TypeScript type shape forbids at construction, `validateConditionShallow` refuses at runtime. Rationale: two operators surveyed, both wanted a depth-1 group ("program on-air AND schedule playing", "title contains 'break' OR type is break"). Trees of ANDs and ORs are where scripting rules become unreadable — see every no-code automation tool that shipped this and walked it back. Empty-group semantics: `all_of[] = true` (vacuous truth, matches Rego/K8s label selectors), `any_of[] = false`. Documented + tested. `evalCondition` short-circuits: an `all_of` stops on the first false, an `any_of` on the first true — verified via a `Proxy`-trapped snapshot that would explode if the parser touched the poisoned second clause. `validateRule` recurses into groups: every leaf's field must be in the whitelist, no nested groups accepted. **Zero migration needed** — every v2 leaf condition is a valid variant of the new union.
+
+**UI (`AutomationPanel.tsx`):** condition shape dropdown (`no condition / single clause / all of… / any of…`). Single-clause mode gets the same one-row leaf editor as before. Group mode shows a stack of leaf editors with per-clause Remove buttons and an Add clause button. Empty groups render a caption clarifying their evaluation semantics so an operator building "all of… (nothing)" isn't surprised when the trigger always fires. Trigger changes retain existing leaves where possible; switching from `all_of` to `any_of` doesn't rewrite the clauses.
+
+**Verified (2026-07-11):**
+- `bunx tsc --noEmit` exit 0
+- `bun run build` succeeds (18s)
+- `bun run scripts/verify-phase10_2.ts` — **19/19 pass** covering backward compat (leaf conditions unchanged), all_of semantics (all-true/one-false/empty/short-circuit), any_of (one-true/all-false/empty/short-circuit), validation (leaf + group + nested-rejection + whitelist-in-group + empty-group-accepted), plus two real-world scenarios (broadcast-shaped all_of + numeric range any_of)
+- `cargo test --lib` — **36/36 pass** (30 previous + 6 new mos: `ro_ack_has_null_terminator_and_status`, `ro_ack_survives_parser_as_unhandled`, `ro_item_cue_has_null_terminator_and_fields`, `ro_item_cue_survives_parser_as_unhandled`, `xml_escape_covers_wire_hostile_chars`, `ro_ack_escapes_status_and_ids`)
+- All previous verify-phase{7,8,9,10,10_1} still pass
+- CI extended to run verify-phase10_2
+
+**Not verified:** live NRCS interop (still needs iNews/ENPS/Octopus to observe a "story turns red" after a real take). Recommend an operator pass — Configure MOS, restart the server, connect a real NCS, take an item from an imported rundown, watch the NCS's producer view.
+
+**Explicit deferrals (Phase 10.3 or later):**
+- `mosReqAll` handshake reply, `mosListSearchableSchema`, `mosObj*` asset sync (still separate scope).
+- `roStorySchedule` outbound (as-run schedule reporting distinct from `roItemCue`).
+- MOS "upper port" (a second listener on the paired command port).
+- Deeper condition trees — banned by design this pass; may reconsider if operator experience actually needs it (would need real reports, not speculation).
+
 ## Phase 11+ — Spout/Syphon, signed installers, live profiling
 
 ---
