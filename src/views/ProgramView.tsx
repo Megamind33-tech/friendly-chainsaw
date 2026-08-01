@@ -40,18 +40,46 @@ export default function ProgramView() {
 
   // Program liveness moved here now that `/program` serves this real renderer
   // instead of Rust-generated HTML with an injected heartbeat script.
+  //
+  // Driven by requestAnimationFrame, NOT setInterval. status.rs treats these
+  // hits as the sole evidence that Program is live and computes health_pct
+  // from their rate — but a setInterval keeps firing at full rate while the
+  // page paints nothing (occluded/suspended WebView, lost GPU process, a
+  // renderer throwing every frame). The ON-AIR lamp then read a steady "Live /
+  // 100%" over frozen output: precisely the failure it exists to catch. rAF is
+  // driven by the compositor, so the heartbeat stops when painting stops.
+  //
+  // What this proves: the Program page is alive and presenting frames. What it
+  // does NOT prove: that content changed (a static lower third is legitimately
+  // on air), or that a downstream consumer received anything.
   useEffect(() => {
     const fps = Math.max(1, Math.min(project?.fps ?? 30, 120));
     const intervalMs = 1000 / fps;
     let cancelled = false;
-    const tick = () => {
-      if (!cancelled) void fetch(TICK_URL).catch(() => {});
+    let rafId = 0;
+    let lastSentAt = 0;
+    // One hit in flight at a time. The old fire-and-forget loop could queue
+    // requests faster than the sidecar drained them at 50/60fps.
+    let inFlight = false;
+
+    const frame = (now: number) => {
+      if (cancelled) return;
+      if (!inFlight && now - lastSentAt >= intervalMs) {
+        lastSentAt = now;
+        inFlight = true;
+        void fetch(TICK_URL)
+          .catch(() => {})
+          .finally(() => {
+            inFlight = false;
+          });
+      }
+      rafId = requestAnimationFrame(frame);
     };
-    tick();
-    const id = setInterval(tick, intervalMs);
+    rafId = requestAnimationFrame(frame);
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      cancelAnimationFrame(rafId);
     };
   }, [project?.fps]);
 

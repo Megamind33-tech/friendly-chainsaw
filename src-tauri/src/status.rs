@@ -35,8 +35,15 @@ pub struct StatusSnapshot {
 }
 
 /// Tracks real request timestamps for a rolling window. This is the only
-/// source of truth for "is something actually pulling /program" — nothing
-/// here is fabricated or timer-simulated.
+/// source of truth for "is something actually pulling /program".
+///
+/// Nothing is fabricated *here*, but this struct is only as honest as its
+/// caller: the hits come from ProgramView's heartbeat, which is driven by
+/// `requestAnimationFrame` so it stops when the page stops painting. It was
+/// previously a `setInterval`, which kept ticking at full rate over frozen
+/// output and made this report a steady "Live / 100%" for a dead Program.
+/// If that heartbeat ever moves back to a timer, every state below becomes a
+/// statement about the timer, not about the picture.
 pub struct RequestStats {
     hits: VecDeque<Instant>,
 }
