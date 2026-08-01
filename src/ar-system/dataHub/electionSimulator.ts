@@ -24,7 +24,10 @@ function mutateElection(base: ElectionData): ElectionData {
     ...base,
     reportingPct: Math.min(100, Math.round((base.reportingPct + Math.random() * 2) * 10) / 10),
     lastUpdated: new Date().toISOString(),
-    sourceStatus: "live",
+    // "simulated", never "live" — these vote deltas come from Math.random()
+    // above. Stamped "live" they drove the same on-air status indicator a real
+    // feed does, so a simulated election was indistinguishable from a real one.
+    sourceStatus: "simulated",
     candidates,
   };
 }
