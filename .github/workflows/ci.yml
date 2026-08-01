@@ -47,6 +47,13 @@ jobs:
       - name: TypeScript typecheck
         run: bunx tsc --noEmit
 
+      - name: Unit tests (Vitest)
+        # Unit layer, added in the 2026-08 audit. Complements — does not
+        # replace — the phase verification suites below: those are acceptance
+        # tests per phase, this covers the data-source/data-hub/binding units
+        # they never reached (see docs/AUDIT-2026-08.md, S1-6).
+        run: bun run test
+
       - name: Production build
         run: bun run build
 
@@ -104,6 +111,48 @@ jobs:
             cargo-${{ runner.os }}-
 
       - name: cargo check --tests
+        working-directory: src-tauri
+        run: cargo check --tests
+
+      - name: cargo test --lib
+        working-directory: src-tauri
+        run: cargo test --lib
+
+  verify-rust-windows:
+    name: Rust (Windows — NDI / WebView2 / Spout)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Linux job above cannot compile a single line of the output path
+      # that actually ships: capture.rs is entirely #[cfg(windows)], ndi.rs
+      # hand-rolls the NDI SDK FFI, spout.rs is Windows/macOS, and Cargo.toml
+      # pins webview2-com/windows with `=` so they match tauri's own vendored
+      # versions exactly. Hand-rolled FFI behind exact version pins is exactly
+      # the code that most needs a compile gate — and it had none until the
+      # 2026-08 audit (docs/AUDIT-2026-08.md, S1-7).
+      #
+      # No NDI SDK is installed here on purpose: ndi.rs dynamic-loads at
+      # runtime (libloading) rather than linking at build time, so a machine
+      # without the SDK still compiles and honestly reports unavailable. That
+      # design is what makes this job cheap — and this job is what keeps that
+      # design from silently breaking.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: cargo check --tests (windows target)
         working-directory: src-tauri
         run: cargo check --tests
 
