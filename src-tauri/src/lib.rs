@@ -41,6 +41,27 @@ pub(crate) struct AssetDirState {
     pub(crate) assets_dir: PathBuf,
 }
 
+/// Lock a mutex, recovering the guard if the mutex is poisoned.
+///
+/// Every output-plane HTTP handler used `.lock().unwrap()`. A panic in ANY
+/// thread while holding one of these locks poisons it permanently, so every
+/// later `.lock().unwrap()` panics too — `/program`, `/program/tick`,
+/// `/document`, `/status` and the SSE stream would all stay dead for the rest
+/// of the process. That is an unrecoverable mid-show output loss caused by one
+/// unrelated panic, and a restart is the only way out.
+///
+/// The data behind these locks is a `String` envelope and a request-rate
+/// counter: a torn write costs at worst one stale envelope or one miscounted
+/// hit, which is strictly better than losing Program output. There is no
+/// unsafety in continuing — poisoning is an advisory signal, not a memory
+/// hazard.
+pub(crate) fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| {
+        eprintln!("warning: recovered a poisoned lock — a prior panic left it held; continuing so Program output stays up");
+        poisoned.into_inner()
+    })
+}
+
 #[derive(Clone)]
 struct AppState {
     doc: ProgramDocState,
@@ -247,7 +268,7 @@ fn program_index_html(state: &AppState) -> Result<String, String> {
 /// window instead of the old Rust rect/text snapshot.
 async fn program_handler(axum::extract::State(state): axum::extract::State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
-    state.stats.lock().unwrap().record_hit();
+    lock_recover(&state.stats).record_hit();
     if cfg!(debug_assertions) {
         return axum::response::Redirect::temporary("http://localhost:1423/renderer.html#/program").into_response();
     }
@@ -286,7 +307,7 @@ async fn program_static_handler(
 /// that a consumer (OBS's Browser Source) is actively displaying us, since
 /// a CEF page load alone never re-requests `/program`.
 async fn program_tick_handler(axum::extract::State(state): axum::extract::State<AppState>) -> axum::http::StatusCode {
-    state.stats.lock().unwrap().record_hit();
+    lock_recover(&state.stats).record_hit();
     axum::http::StatusCode::OK
 }
 
@@ -313,7 +334,7 @@ async fn document_stream_handler(
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::BroadcastStream;
 
-    let initial = state.doc.lock().unwrap().clone();
+    let initial = lock_recover(&state.doc).clone();
     let rx = state.doc_broadcast.subscribe();
     let updates = BroadcastStream::new(rx).filter_map(|msg| {
         // A slow client missed some intermediate frames (Lagged) — not
@@ -331,7 +352,7 @@ async fn document_stream_handler(
 /// deliberately — this is a same-machine local dev tool, not a public
 /// service. Returns the envelope as pushed, unmodified.
 async fn document_handler(axum::extract::State(state): axum::extract::State<AppState>) -> impl axum::response::IntoResponse {
-    let content = state.doc.lock().unwrap().clone();
+    let content = lock_recover(&state.doc).clone();
     let value: serde_json::Value = serde_json::from_str(&content).unwrap_or(serde_json::Value::Null);
     (
         [(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
@@ -344,12 +365,12 @@ async fn document_handler(axum::extract::State(state): axum::extract::State<AppS
 /// `/program` + `/program/tick` hits — see status.rs. `ndi` is always
 /// honest about the stub being unavailable.
 async fn status_handler(axum::extract::State(state): axum::extract::State<AppState>) -> impl axum::response::IntoResponse {
-    let content = state.doc.lock().unwrap().clone();
+    let content = lock_recover(&state.doc).clone();
     let expected_fps = parse_envelope(&content)
         .and_then(|env| env.project.get("fps").and_then(|v| v.as_f64()))
         .filter(|f| *f > 0.0)
         .unwrap_or(30.0);
-    let snapshot = state.stats.lock().unwrap().snapshot(expected_fps);
+    let snapshot = lock_recover(&state.stats).snapshot(expected_fps);
     let ndi_status = state.ndi.status();
     let body = serde_json::json!({
         "programState": snapshot.program_state,

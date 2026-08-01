@@ -87,7 +87,7 @@ impl RecordState {
     }
 
     pub fn status(&self) -> RecordStatus {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = crate::lock_recover(&self.inner);
         // Poll for silent subprocess exit: an ffmpeg that crashed without
         // being stopped by us must not read as still-recording. try_wait()
         // is non-blocking; None means still running.
@@ -213,7 +213,7 @@ pub async fn start_record_from_command(
 ) -> Result<StartRecordResult, String> {
     let state = app.state::<RecordState>();
     {
-        let guard = state.inner.lock().unwrap();
+        let guard = crate::lock_recover(&state.inner);
         if guard.child.is_some() {
             return Err("already recording — stop first".to_string());
         }
@@ -251,7 +251,7 @@ pub async fn start_record_from_command(
         Err(e) => {
             let err = format!("failed to spawn ffmpeg: {e} (is ffmpeg on PATH?)");
             let record_state = app.state::<RecordState>();
-            let mut guard = record_state.inner.lock().unwrap();
+            let mut guard = crate::lock_recover(&record_state.inner);
             guard.last_error = Some(err.clone());
             return Err(err);
         }
@@ -260,7 +260,7 @@ pub async fn start_record_from_command(
     let started_at = millis as i64;
     {
         let record_state = app.state::<RecordState>();
-        let mut guard = record_state.inner.lock().unwrap();
+        let mut guard = crate::lock_recover(&record_state.inner);
         guard.child = Some(child);
         guard.path = Some(path.clone());
         guard.started_at_ms = Some(started_at);
@@ -276,7 +276,7 @@ pub async fn start_record_from_command(
 pub fn stop_record_from_command(app: &AppHandle) -> Result<StopRecordResult, String> {
     let state = app.state::<RecordState>();
     let (mut child, path, started_at) = {
-        let mut guard = state.inner.lock().unwrap();
+        let mut guard = crate::lock_recover(&state.inner);
         let child = guard.child.take().ok_or_else(|| "not recording".to_string())?;
         let path = guard.path.clone().ok_or_else(|| "record path missing".to_string())?;
         let started_at = guard.started_at_ms.unwrap_or(0);
