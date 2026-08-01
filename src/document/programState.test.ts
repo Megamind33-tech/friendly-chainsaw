@@ -100,6 +100,46 @@ describe("take", () => {
     expect(isTransitionCurrent(first, useDocStore.getState().programSceneId)).toBe(false);
   });
 
+  it("carries wipe softness onto the record", () => {
+    useDocStore.getState().armPreview(ids.b);
+    useDocStore.getState().take({ type: "wipeRight", softness: 0.2 });
+    const t = useDocStore.getState().transition!;
+    expect(t.type).toBe("wipeRight");
+    expect(t.softness).toBeCloseTo(0.2);
+  });
+
+  it("clamps an absurd softness rather than trusting it", () => {
+    useDocStore.getState().armPreview(ids.b);
+    useDocStore.getState().take({ type: "wipeUp", softness: 99 });
+    expect(useDocStore.getState().transition!.softness).toBe(0.5);
+  });
+
+  it("records the clip and cut point for a stinger", () => {
+    useDocStore.getState().armPreview(ids.b);
+    useDocStore.getState().take({ type: "stinger", stingerAssetId: "vid-1", cutAt: 0.3 });
+    const t = useDocStore.getState().transition!;
+    expect(t.type).toBe("stinger");
+    expect(t.stingerAssetId).toBe("vid-1");
+    expect(t.cutAt).toBeCloseTo(0.3);
+  });
+
+  it("degrades a stinger with no clip to a hard cut, never an empty overlay", () => {
+    // An operator who selects Stinger but picks no clip must get a clean cut,
+    // not a transition that silently shows nothing over a frozen frame.
+    useDocStore.getState().armPreview(ids.b);
+    useDocStore.getState().take({ type: "stinger", stingerAssetId: null });
+
+    expect(useDocStore.getState().programSceneId).toBe(ids.b);
+    expect(useDocStore.getState().transition).toBeNull();
+  });
+
+  it("does not attach stinger fields to a non-stinger transition", () => {
+    useDocStore.getState().setDefaultTransition({ stingerAssetId: "vid-1" });
+    useDocStore.getState().armPreview(ids.b);
+    useDocStore.getState().take({ type: "dissolve" });
+    expect(useDocStore.getState().transition!.stingerAssetId).toBeUndefined();
+  });
+
   it("snapshots the outgoing scene's playback so its timelined layers can fade", () => {
     const layerId = useDocStore.getState().addLayer(ids.a, "gfx2d");
     useDocStore.getState().playIn(layerId);
@@ -155,6 +195,8 @@ describe("transition lifecycle", () => {
       fromOpacity: 0,
       toOpacity: 1,
       done: true,
+      wipe: null,
+      stingerElapsedSec: null,
     });
   });
 

@@ -71,13 +71,16 @@ const cameraOrbitsSchema = z.record(z.string(), z.object({
   pivotStart: vec3Schema,
 }));
 const sceneTransitionSchema = z.object({
-  type: z.enum(["dissolve", "dipToClear"]),
+  type: z.enum(["dissolve", "dipToClear", "wipeRight", "wipeLeft", "wipeDown", "wipeUp", "stinger"]),
   fromSceneId: z.string(),
   toSceneId: z.string(),
   durationMs: z.number().finite(),
   ease: z.string(),
   startedAt: z.number().finite(),
   fromLayerPlayback: layerPlaybackSchema,
+  softness: z.number().finite().optional(),
+  stingerAssetId: z.string().optional(),
+  cutAt: z.number().finite().optional(),
 });
 const arFocusSchema = z.record(z.string(), z.object({ nodeIds: z.array(z.string()), startedAt: z.number().finite() }));
 

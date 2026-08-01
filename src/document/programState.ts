@@ -3,6 +3,8 @@ import type { ID } from "./types";
 import type { Store } from "./store";
 import { flattenArSetNodes } from "@/ar-engine/nodeUtils";
 import {
+  clampCutAt,
+  clampSoftness,
   clampTransitionMs,
   DEFAULT_TRANSITION_EASE,
   DEFAULT_TRANSITION_SETTINGS,
@@ -107,7 +109,13 @@ export const createProgramSlice: StateCreator<Store, [Immer], [], ProgramSlice> 
     // must not leave a transition record behind either.
     if (previewSceneId === null || previewSceneId === programSceneId) return;
 
-    const type: TransitionType = override?.type ?? defaultTransition.type;
+    const requestedType: TransitionType = override?.type ?? defaultTransition.type;
+    const stingerAssetId = override?.stingerAssetId ?? defaultTransition.stingerAssetId;
+    // A stinger with no clip selected has nothing to hide the cut behind.
+    // Degrade to a hard cut rather than mixing to an empty overlay — an
+    // operator must never get a transition that silently shows nothing.
+    const type: TransitionType =
+      requestedType === "stinger" && !stingerAssetId ? "cut" : requestedType;
     const durationMs = clampTransitionMs(override?.durationMs ?? defaultTransition.durationMs);
     const fromSceneId = programSceneId;
     // Snapshot BEFORE cut() prunes playback to the incoming scene's layers —
@@ -143,6 +151,10 @@ export const createProgramSlice: StateCreator<Store, [Immer], [], ProgramSlice> 
         ease: override?.ease ?? DEFAULT_TRANSITION_EASE,
         startedAt: Date.now(),
         fromLayerPlayback,
+        softness: clampSoftness(override?.softness ?? defaultTransition.softness),
+        ...(type === "stinger" && stingerAssetId
+          ? { stingerAssetId, cutAt: clampCutAt(override?.cutAt ?? defaultTransition.cutAt) }
+          : {}),
       };
     });
   },
@@ -152,6 +164,15 @@ export const createProgramSlice: StateCreator<Store, [Immer], [], ProgramSlice> 
       if (settings.type !== undefined) state.defaultTransition.type = settings.type;
       if (settings.durationMs !== undefined) {
         state.defaultTransition.durationMs = clampTransitionMs(settings.durationMs);
+      }
+      if (settings.softness !== undefined) {
+        state.defaultTransition.softness = clampSoftness(settings.softness);
+      }
+      if (settings.stingerAssetId !== undefined) {
+        state.defaultTransition.stingerAssetId = settings.stingerAssetId;
+      }
+      if (settings.cutAt !== undefined) {
+        state.defaultTransition.cutAt = clampCutAt(settings.cutAt);
       }
     }),
 

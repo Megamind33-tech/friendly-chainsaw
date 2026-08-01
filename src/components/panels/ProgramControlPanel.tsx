@@ -5,7 +5,9 @@ import { useOutputStatus } from "@/output/useOutputStatus";
 import { Button } from "@/components/ui/button";
 import { Radio, Plus, Trash2 } from "lucide-react";
 import {
+  isWipe,
   MAX_TRANSITION_MS,
+  MAX_WIPE_SOFTNESS,
   MIN_TRANSITION_MS,
   TRANSITION_LABELS,
   TRANSITION_TYPES,
@@ -88,6 +90,7 @@ export function ProgramControlPanel() {
   const cut = useDocStore((s) => s.cut);
   const defaultTransition = useDocStore((s) => s.defaultTransition);
   const setDefaultTransition = useDocStore((s) => s.setDefaultTransition);
+  const videoAssets = (project?.assets ?? []).filter((a) => a.kind === "video");
   const addScene = useDocStore((s) => s.addScene);
   const removeScene = useDocStore((s) => s.removeScene);
   const renameScene = useDocStore((s) => s.renameScene);
@@ -182,6 +185,74 @@ export function ProgramControlPanel() {
         />
         <span className="font-mono text-text-muted">ms</span>
       </div>
+
+      {isWipe(defaultTransition.type) && (
+        <div className="flex shrink-0 items-center gap-1.5 pt-1 text-[10px]">
+          <span className="font-mono uppercase tracking-wide text-text-muted">Soft</span>
+          <input
+            type="range"
+            min={0}
+            max={MAX_WIPE_SOFTNESS}
+            step={0.01}
+            value={defaultTransition.softness}
+            onChange={(e) => setDefaultTransition({ softness: Number(e.target.value) })}
+            className="min-w-0 flex-1 accent-accent-blue"
+            title="Wipe edge softness — 0 is a hard edge"
+          />
+          <span className="w-8 text-right font-mono text-text-muted">
+            {Math.round(defaultTransition.softness * 100)}%
+          </span>
+        </div>
+      )}
+
+      {defaultTransition.type === "stinger" && (
+        <div className="flex shrink-0 flex-col gap-1 pt-1 text-[10px]">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono uppercase tracking-wide text-text-muted">Clip</span>
+            <select
+              value={defaultTransition.stingerAssetId ?? ""}
+              onChange={(e) => setDefaultTransition({ stingerAssetId: e.target.value || null })}
+              className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-surface px-1 py-0.5 font-mono text-[10px] text-text-muted-alt"
+              title="Video asset played over the cut"
+            >
+              <option value="">— none —</option>
+              {videoAssets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono uppercase tracking-wide text-text-muted">Cut&nbsp;at</span>
+            <input
+              type="range"
+              min={0.05}
+              max={0.95}
+              step={0.01}
+              value={defaultTransition.cutAt}
+              onChange={(e) => setDefaultTransition({ cutAt: Number(e.target.value) })}
+              className="min-w-0 flex-1 accent-accent-blue"
+              title="Point in the clip where the scene changes — set it to the frame that fully covers the picture"
+            />
+            <span className="w-8 text-right font-mono text-text-muted">
+              {Math.round(defaultTransition.cutAt * 100)}%
+            </span>
+          </div>
+          {/* Honest about the degrade rather than letting an operator press
+              Take and wonder why nothing played. */}
+          {!defaultTransition.stingerAssetId && (
+            <span className="font-mono text-[9px] text-live-red">
+              No clip selected — Take will hard cut.
+            </span>
+          )}
+          {videoAssets.length === 0 && (
+            <span className="font-mono text-[9px] text-text-muted">
+              Import a video asset to use a stinger.
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex shrink-0 gap-1.5 pt-1.5">
         <Button

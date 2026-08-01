@@ -48,7 +48,7 @@ Priority: **T** table-stakes for the class · **C** competitive differentiator �
 | NDI output | 🟡 video-only, PNG round-trip (S1-9, S2-11) | ✅ full | **Frame-rate ceiling; no audio** | **T** |
 | Spout / Syphon GPU share | 🔴 honest stub (S2-10) | ✅ | Standard local-compositor path missing | **T** |
 | SDI fill+key out | ⬛ needs DeckLink/Bluefish | ✅ | Category boundary, not a defect | — |
-| **Transitions on Take** | ✅ dissolve / dip to clear (S1-8, fixed) | ✅ even in OBS | Wipes and stingers still absent | **T** |
+| **Transitions on Take** | ✅ dissolve, dip to clear, 4 softened wipes, stinger (S1-8) | ✅ even in OBS | Stinger audio deferred with S2-11 | **T** |
 | Recording | ✅ FFmpeg (`record.rs`) | ✅ | — | T |
 | Control surface integration | ✅ Companion module + control server | 🟡 | **Ahead** | C |
 | Multi-channel playout | 🔴 single Program | ✅ | One output only | C |
@@ -121,6 +121,6 @@ Compete in **Tier 1**, sell the Tier 4 rundown/MOS strength as the differentiato
 
 The changes that most improve competitive standing, in order:
 
-1. ~~**Transitions on Take**~~ — done (S1-8). Dissolve and dip-to-clear ship; wipes and stingers are the natural follow-on and the extension points are in place.
+1. ~~**Transitions on Take**~~ — done (S1-8). Dissolve, dip-to-clear, four softened wipes and stingers all ship; this row is now at parity with the tier.
 2. **Feed authentication + push transport** — without headers the product cannot consume most commercial data feeds, which is the core promise of data-driven graphics. Now the single biggest functional gap.
 3. **FreeD camera-tracking ingest, or drop the AR claim** — currently the product invites a comparison it cannot win.

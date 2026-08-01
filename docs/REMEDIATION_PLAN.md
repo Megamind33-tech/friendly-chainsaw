@@ -19,9 +19,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **S1-5** | Two-column CSV header/row disambiguation | `externalConnector.test.ts` — 4 CSV tests |
 | **S1-6** | Vitest 3.2.7 + happy-dom + config + scripts; 22 seed tests | `bunx vitest run` |
 | **S1-7** | `verify-rust-windows` CI job (`windows-latest`) + `bun run test` wired into the frontend job | YAML parses; job graph verified — first CI run is its own proof |
-| **S1-8** | Take now runs real transitions (dissolve / dip to clear); `cut()` unchanged | `sceneTransition.test.ts` + `programState.test.ts` — 24 tests; **live check required**, see R0 |
+| **S1-8** | Take now runs real transitions — dissolve, dip to clear, 4 softened wipes, stinger; `cut()` unchanged | `sceneTransition.test.ts` + `programState.test.ts` — 43 tests; **live check required**, see R0 |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 36/36 · `vitest run` 46/46.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 36/36 · `vitest run` 65/65.
 
 ---
 
@@ -64,12 +64,48 @@ Acceptance criteria, as written before implementation:
 - [x] Unit tests for the state machine and the mix timing.
 - [ ] **Live OBS check for the visual — folded into R0.**
 
-Follow-ups deliberately not taken here, in rough value order:
+### R2b — Wipes and stingers · **DONE**
 
-1. **Wipes and stingers.** The `TransitionType` union and `TransitionCompositor` are the extension points; a wipe is a clip-path over the same mix, a stinger an overlay clip with a cut at its midpoint.
-2. **Persist `defaultTransition`.** It currently resets to Dissolve/500ms on relaunch. `sqliteSettingsRepository` (as used by `externalConnector.ts`) is the obvious home.
-3. **Auto-transition rate on the control surface.** Companion currently sends `take` with no params, so it uses the operator default; exposing MIX/CUT as separate buttons is a module change only.
-4. **Confidence-monitor videofeed sources** (`SetNodes.tsx`, `role: "program"`) still cut rather than mix — they render the program scene directly rather than through `TransitionCompositor`.
+Followed in the same branch, on the extension points R2 left in place.
+
+- **Four wipes** — `wipeRight/Left/Down/Up`, named for the direction the edge
+  *travels*, with the arrow spelled out in the label ("Wipe →"). "Wipe left"
+  is ambiguous in every control room: does the picture move left, or is it
+  revealed from the left?
+- **Softness** — an operator-set feather (0 = hard edge, capped at 50% of the
+  axis). Both scenes stay fully opaque during a wipe and complementary CSS
+  mask gradients decide which pixels each contributes. `wipeMaskGradient()`
+  generates both sides from one function so they cannot drift apart and leave
+  a seam or a double-exposed band at the edge.
+- **Stinger** — a full-frame video asset played over the change, with the
+  scene swap as a **hard cut** at an operator-set `cutAt` point. Fading under
+  a stinger would defeat its whole purpose: the clip exists precisely so the
+  cut is never seen. Clip time runs on real elapsed time, never the ease
+  curve, so the video cannot drift against its own audio or against the frame
+  the artist drew the cut for. A window joining mid-transition seeks to the
+  right offset rather than restarting the clip.
+- **Honest degrades** — a stinger with no clip selected becomes a hard cut
+  (and the panel says so, in red, before the operator presses Take); a
+  deleted or wrong-kind asset renders no overlay while the scene change
+  underneath still lands on time. The worst case is a visible cut, never a
+  blank or frozen Program.
+
+**Known limitation, deliberate:** the stinger plays **muted**. Stinger audio
+needs the output audio path that does not exist yet (S2-11), and unmuted
+autoplay is subject to browser gesture policy in a window the operator never
+clicked — so it would be an unreliable promise rather than a feature. Revisit
+with S2-11.
+
+19 further tests: edge travel, direction mapping, softness clamping, mask
+complementarity, gradient stops staying inside 0–100 and non-decreasing at
+both extremes, the hard swap at `cutAt`, ease-independent clip timing, and
+the clipless-stinger degrade.
+
+Follow-ups deliberately not taken, in rough value order:
+
+1. **Persist `defaultTransition`.** It currently resets to Dissolve/500ms on relaunch. `sqliteSettingsRepository` (as used by `externalConnector.ts`) is the obvious home.
+2. **Auto-transition rate on the control surface.** Companion currently sends `take` with no params, so it uses the operator default; exposing MIX/CUT as separate buttons is a module change only.
+3. **Confidence-monitor videofeed sources** (`SetNodes.tsx`, `role: "program"`) still cut rather than mix — they render the program scene directly rather than through `TransitionCompositor`.
 
 ---
 
@@ -91,7 +127,7 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 
 ## R5 — Grow test coverage from seed to net · S1-6 · effort: ongoing
 
-46 tests against 45,371 lines is still a seed. Priority order — highest on-air consequence first:
+65 tests against 45,371 lines is still a seed. Priority order — highest on-air consequence first:
 
 1. **Binding resolution + format/fallback** — decides literal on-air text; S0-2(d) lived here.
 2. ~~**`programState` take/cut/arm**~~ — covered by `programState.test.ts` (R2).
