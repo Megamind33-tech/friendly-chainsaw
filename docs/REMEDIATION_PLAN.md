@@ -19,8 +19,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **S1-5** | Two-column CSV header/row disambiguation | `externalConnector.test.ts` — 4 CSV tests |
 | **S1-6** | Vitest 3.2.7 + happy-dom + config + scripts; 22 seed tests | `bunx vitest run` |
 | **S1-7** | `verify-rust-windows` CI job (`windows-latest`) + `bun run test` wired into the frontend job | YAML parses; job graph verified — first CI run is its own proof |
+| **S1-8** | Take now runs real transitions (dissolve / dip to clear); `cut()` unchanged | `sceneTransition.test.ts` + `programState.test.ts` — 24 tests; **live check required**, see R0 |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 36/36 · `vitest run` 22/22.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 36/36 · `vitest run` 46/46.
 
 ---
 
@@ -46,18 +47,29 @@ The `verify-rust-windows` job is added and its YAML parses, but GitHub Actions c
 
 ---
 
-## R2 — Transitions on Take · S1-8 · effort: 1–2 days · highest user-visible value
+## R2 — Transitions on Take · S1-8 · **DONE**
 
-`take()` has aliased `cut()` since Phase 2 with a comment deferring transitions to Phase 3. It is Phase 10.2. Table stakes in every tier — OBS has this.
+Implemented; see `AUDIT-2026-08.md` S1-8 for the design and the two
+non-obvious interactions it had to solve (outgoing-scene playback pruning,
+and the two-write envelope push).
 
-**Acceptance (write first):**
-- `take()` accepts a transition `{ type: 'cut' | 'dissolve' | 'fade', durationMs }`, defaulting to the operator's configured default.
-- A dissolve renders both scenes with correct opacity through the transition in Program, Preview and OBS.
-- `cut()` remains a hard instant switch — the existing seam is preserved, not repurposed.
-- A take during an in-flight transition resolves deterministically (no stuck blend).
-- Transition state rides the envelope, so the sidecar-served renderer shows it identically.
-- Zero undo entries — this is `ProgramSlice`, outside history by construction.
-- Unit tests for state machine + timing; live OBS check for the visual.
+Acceptance criteria, as written before implementation:
+
+- [x] `take()` accepts a transition `{ type, durationMs }`, defaulting to the operator's configured default.
+- [x] A dissolve renders both scenes at correct opacity through the transition, in Program, the multiviewer PGM tile, and the sidecar-served renderer OBS reads. *(Opacity math is unit-tested; the visual needs R0.)*
+- [x] `cut()` remains a hard instant switch — the existing seam is preserved, not repurposed.
+- [x] A take during an in-flight transition resolves deterministically (no stuck blend).
+- [x] Transition state rides the envelope, so every renderer shows it identically.
+- [x] Zero undo entries — it lives in `ProgramSlice`, outside history by construction.
+- [x] Unit tests for the state machine and the mix timing.
+- [ ] **Live OBS check for the visual — folded into R0.**
+
+Follow-ups deliberately not taken here, in rough value order:
+
+1. **Wipes and stingers.** The `TransitionType` union and `TransitionCompositor` are the extension points; a wipe is a clip-path over the same mix, a stinger an overlay clip with a cut at its midpoint.
+2. **Persist `defaultTransition`.** It currently resets to Dissolve/500ms on relaunch. `sqliteSettingsRepository` (as used by `externalConnector.ts`) is the obvious home.
+3. **Auto-transition rate on the control surface.** Companion currently sends `take` with no params, so it uses the operator default; exposing MIX/CUT as separate buttons is a module change only.
+4. **Confidence-monitor videofeed sources** (`SetNodes.tsx`, `role: "program"`) still cut rather than mix — they render the program scene directly rather than through `TransitionCompositor`.
 
 ---
 
@@ -79,10 +91,10 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 
 ## R5 — Grow test coverage from seed to net · S1-6 · effort: ongoing
 
-22 tests against 45,371 lines is a seed. Priority order — highest on-air consequence first:
+46 tests against 45,371 lines is still a seed. Priority order — highest on-air consequence first:
 
 1. **Binding resolution + format/fallback** — decides literal on-air text; S0-2(d) lived here.
-2. **`programState` take/cut/arm** — including the `layerPlayback` cleanup in `cut()`.
+2. ~~**`programState` take/cut/arm**~~ — covered by `programState.test.ts` (R2).
 3. **`timelineEngine`** — playback gating decides whether a layer is visible on air at all.
 4. **`playout.ts`** (765 lines) — rundown timing, `next`/`previous`, schedule.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.

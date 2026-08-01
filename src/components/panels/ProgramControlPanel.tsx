@@ -4,6 +4,13 @@ import { useLiveShowStore } from "@/document/liveShowStore";
 import { useOutputStatus } from "@/output/useOutputStatus";
 import { Button } from "@/components/ui/button";
 import { Radio, Plus, Trash2 } from "lucide-react";
+import {
+  MAX_TRANSITION_MS,
+  MIN_TRANSITION_MS,
+  TRANSITION_LABELS,
+  TRANSITION_TYPES,
+  type TransitionType,
+} from "@/document/sceneTransition";
 
 /** Double-click to rename a scene in place. */
 function SceneName({ name, onRename }: { name: string; onRename: (name: string) => void }) {
@@ -79,6 +86,8 @@ export function ProgramControlPanel() {
   const armPreview = useDocStore((s) => s.armPreview);
   const take = useDocStore((s) => s.take);
   const cut = useDocStore((s) => s.cut);
+  const defaultTransition = useDocStore((s) => s.defaultTransition);
+  const setDefaultTransition = useDocStore((s) => s.setDefaultTransition);
   const addScene = useDocStore((s) => s.addScene);
   const removeScene = useDocStore((s) => s.removeScene);
   const renameScene = useDocStore((s) => s.renameScene);
@@ -144,13 +153,48 @@ export function ProgramControlPanel() {
         <Plus className="h-3 w-3" /> Add Scene
       </Button>
 
-      <div className="mt-auto flex shrink-0 gap-1.5 border-t border-border-subtle pt-2">
+      {/* Transition settings for Take. Cut is deliberately not affected — it
+          stays a hard instant switch whatever is selected here. */}
+      <div className="mt-auto flex shrink-0 items-center gap-1.5 border-t border-border-subtle pt-2 text-[10px]">
+        <span className="font-mono uppercase tracking-wide text-text-muted">Mix</span>
+        <select
+          value={defaultTransition.type}
+          onChange={(e) => setDefaultTransition({ type: e.target.value as TransitionType })}
+          className="min-w-0 flex-1 rounded border border-border-subtle bg-bg-surface px-1 py-0.5 font-mono text-[10px] text-text-muted-alt"
+          title="Transition used by Take"
+        >
+          {TRANSITION_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {TRANSITION_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={MIN_TRANSITION_MS}
+          max={MAX_TRANSITION_MS}
+          step={100}
+          value={defaultTransition.durationMs}
+          disabled={defaultTransition.type === "cut"}
+          onChange={(e) => setDefaultTransition({ durationMs: Number(e.target.value) })}
+          className="w-14 rounded border border-border-subtle bg-bg-surface px-1 py-0.5 text-right font-mono text-[10px] text-text-muted-alt disabled:opacity-30"
+          title="Transition duration in milliseconds"
+        />
+        <span className="font-mono text-text-muted">ms</span>
+      </div>
+
+      <div className="flex shrink-0 gap-1.5 pt-1.5">
         <Button
           size="sm"
           variant="outline"
           disabled={!canTakeOrCut}
           onClick={() => take()}
           className="flex-1 border-border-subtle bg-bg-surface text-text-muted-alt disabled:opacity-30"
+          title={
+            defaultTransition.type === "cut"
+              ? "Take (hard cut)"
+              : `Take (${TRANSITION_LABELS[defaultTransition.type]}, ${defaultTransition.durationMs}ms)`
+          }
         >
           Take
         </Button>

@@ -6,6 +6,7 @@ import { resolveElements } from "./bindings";
 import type { LayerPlayback } from "./playbackState";
 import type { CameraMove, CameraOrbit } from "./cameraMoves";
 import type { ArFocus } from "./arFocus";
+import type { SceneTransition } from "./sceneTransition";
 import { projectSchema, programStateSchema } from "./schema";
 import { createDefaultProject } from "./factory";
 import { upgradeProjectArAnimations } from "@/ar-engine/arPrep";
@@ -141,6 +142,7 @@ async function pushProgramDocument(project: Project, programSceneId: ID | null, 
     cameraOrbits: state.cameraOrbits,
     cameraPreview: state.cameraPreview,
     arFocus: state.arFocus,
+    transition: state.transition,
     verseDataHold: state.verseDataHold,
     dataValues: buildDataValues(useDataStore.getState()),
   });
@@ -149,6 +151,30 @@ async function pushProgramDocument(project: Project, programSceneId: ID | null, 
   } catch (err) {
     console.error("failed to push program document", err);
   }
+}
+
+/**
+ * Drop a transition record once its mix has finished, so a settled transition
+ * stops riding every subsequent envelope.
+ *
+ * Housekeeping only — never correctness. `transitionMix` returns the settled
+ * end state past `durationMs`, so a record that is never cleared (this timer
+ * lost to an app close, a store reset, a missed subscription) renders exactly
+ * like no transition at all. The clear is also guarded on identity: if another
+ * take has already replaced the record, the newer one is left alone.
+ */
+let transitionCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleTransitionCleanup(transition: SceneTransition | null): void {
+  if (transitionCleanupTimer) {
+    clearTimeout(transitionCleanupTimer);
+    transitionCleanupTimer = null;
+  }
+  if (!transition) return;
+  const remaining = Math.max(0, transition.startedAt + transition.durationMs - Date.now());
+  transitionCleanupTimer = setTimeout(() => {
+    transitionCleanupTimer = null;
+    if (useDocStore.getState().transition === transition) useDocStore.getState().clearTransition();
+  }, remaining + 50);
 }
 
 async function insertProject(project: Project): Promise<void> {
@@ -260,17 +286,36 @@ async function initPersistenceOnce(): Promise<void> {
 
   let lastProgramSceneId = programSceneId;
   let lastPreviewSceneId = previewSceneId;
+  // `transition` is watched here too, and it matters: take() commits the scene
+  // change first (via cut()) and installs the transition record in a SECOND
+  // store write. Watching only the scene ids, this subscription fired on the
+  // first write — when transition was still null — and then early-returned on
+  // the second, so the dissolve never reached the envelope and Program/OBS
+  // cut instead of mixing.
+  let lastTransition = useDocStore.getState().transition;
   useDocStore.subscribe((state) => {
     if (!state.project) return;
-    if (state.programSceneId === lastProgramSceneId && state.previewSceneId === lastPreviewSceneId) return;
+    if (
+      state.programSceneId === lastProgramSceneId &&
+      state.previewSceneId === lastPreviewSceneId &&
+      state.transition === lastTransition
+    ) {
+      return;
+    }
+    const sceneChanged =
+      state.programSceneId !== lastProgramSceneId || state.previewSceneId !== lastPreviewSceneId;
     lastProgramSceneId = state.programSceneId;
     lastPreviewSceneId = state.previewSceneId;
-    scheduleProgramStateSave(state.project.id, state.programSceneId, state.previewSceneId);
+    lastTransition = state.transition;
+    // Only the scene ids are persisted; a transient transition must never
+    // schedule a write.
+    if (sceneChanged) scheduleProgramStateSave(state.project.id, state.programSceneId, state.previewSceneId);
     // Re-push immediately (not on the debounce above) so Program/OBS see a
     // Take/Cut with no perceptible delay.
     pushProgramDocument(state.project, state.programSceneId, state.previewSceneId).catch((err) =>
       console.error("failed to push program state change", err),
     );
+    scheduleTransitionCleanup(state.transition);
   });
 
   // Same immediacy requirement as scene cuts: a Play In/Out command must

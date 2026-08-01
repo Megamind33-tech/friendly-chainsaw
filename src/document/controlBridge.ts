@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { useDocStore } from "./store";
+import { isTransitionType } from "./sceneTransition";
 import {
   usePlayoutStore,
   mapMosStoryToItem,
@@ -167,9 +168,18 @@ async function dispatchCommand(cmd: ControlCommand): Promise<void> {
   const po = usePlayoutStore.getState();
 
   switch (cmd.type) {
-    case "take":
-      doc.take();
+    case "take": {
+      // Optional per-command transition override, so a control surface can
+      // bind separate MIX and CUT buttons to the same command. Unknown or
+      // absent values fall through to the operator's configured default.
+      const rawType = cmd.params?.type;
+      const rawMs = Number(cmd.params?.durationMs);
+      doc.take({
+        type: isTransitionType(rawType) ? rawType : undefined,
+        durationMs: Number.isFinite(rawMs) ? rawMs : undefined,
+      });
       break;
+    }
     case "arm": {
       const sceneId = String(cmd.params?.sceneId ?? "");
       if (sceneId) doc.armPreview(sceneId);

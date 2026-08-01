@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { DocumentRenderer } from "@/components/gfx/DocumentRenderer";
+import { TransitionCompositor } from "@/components/gfx/TransitionCompositor";
 import { useDocumentEnvelope } from "@/document/useDocumentEnvelope";
 
 /**
@@ -89,7 +89,7 @@ export default function ProgramView() {
 
   return (
     <div ref={containerRef} className="fixed inset-0 flex items-center justify-center overflow-hidden">
-      <DocumentRenderer
+      <TransitionCompositor
         project={project}
         sceneId={envelope?.programSceneId ?? undefined}
         scale={fitScale}
@@ -99,6 +99,9 @@ export default function ProgramView() {
         cameraMoves={envelope?.cameraMoves}
         cameraOrbits={envelope?.cameraOrbits}
         arFocus={envelope?.arFocus}
+        // Take transitions: Program is the surface that mixes. OBS reads this
+        // same view through the sidecar, so it sees the identical dissolve.
+        transition={envelope?.transition ?? null}
         role="program"
         // The one place a video/live source's real audio plays.
         audible
