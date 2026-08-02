@@ -60,30 +60,45 @@ Program therefore cannot drift — they run the identical `renderElement` builde
 
 ## Installing on Windows
 
-**If you only want to run the app, do not build it.** Download a prebuilt
-installer:
+### Build it locally
 
-1. Repo → **Actions** tab → **Windows installer** workflow
-2. Open the newest green run — one is built for every push to `main`
-3. Download the **`broadcast-graphics-engine-windows`** artifact
-4. Unzip, run the `.exe` — the `.msi` is there too for managed deployment
-
-This needs no Rust, no Visual Studio Build Tools, no Node. WebView2 ships with
-Windows 11 and current Windows 10.
-
-> The builds are **unsigned** — no code-signing certificate is configured — so
-> SmartScreen warns on first run. Choose *More info* → *Run anyway*. Installs
-> per-machine, so Windows asks for administrator rights.
-
-To build from source on Windows instead, install the prerequisites in one go:
+This is the route that works today. From an elevated PowerShell in the project
+directory:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-windows.ps1
 ```
 
-It installs Rust, VS Build Tools with the C++ workload, WebView2 and Bun via
-winget, skipping whatever is already there. Then open a **new** terminal (PATH
-changes don't reach the current one) and follow "Running it" below.
+That installs Rust, Visual Studio Build Tools with the C++ workload, WebView2
+and Bun via winget, skipping anything already present — so a re-run after a
+partial failure is safe. Then open a **new** terminal (PATH changes don't reach
+the current one):
+
+```powershell
+bun install
+bun run doctor        # confirms the prerequisites actually resolved
+bun run tauri build   # 10-20 minutes cold
+```
+
+The installers land in `src-tauri\target\release\bundle` — an NSIS `.exe` and a
+WiX `.msi`. Run the `.exe`. Or skip the bundle and use `bun run tauri dev` to
+run straight from source.
+
+### Prebuilt installer (blocked)
+
+`.github/workflows/release-windows.yml` builds the `.msi` and `.exe` on a
+GitHub `windows-latest` runner and uploads them as an artifact, so installing
+would need no toolchain at all: Actions tab → **Windows installer** → newest
+run → download **`broadcast-graphics-engine-windows`**.
+
+**This does not work yet** — Actions cannot provision a runner on this
+repository (see the CI note under [Testing](#testing)). The workflow is correct
+and will produce installers the moment that setting is fixed; until then, build
+locally.
+
+> Builds are **unsigned** — no code-signing certificate is configured — so
+> SmartScreen warns on first run. Choose *More info* → *Run anyway*. The
+> installer is per-machine, so Windows asks for administrator rights.
 
 ## Running it
 
@@ -182,8 +197,7 @@ bun run check:windows  # type-check the Windows-only FFI from any platform
 `ndi.rs`, `spout.rs` and the `webview2-com`/`windows` FFI — against the
 `x86_64-pc-windows-gnu` target, so a Linux or macOS machine can catch a broken
 Windows build in seconds instead of discovering it on a Windows box. One-time
-setup: `rustup target add x86_64-pc-windows-gnu` plus `mingw-w64`. CI runs it
-on every push, alongside a real MSVC build on `windows-latest`.
+setup: `rustup target add x86_64-pc-windows-gnu` plus `mingw-w64`.
 
 Two layers, deliberately:
 
@@ -191,11 +205,18 @@ Two layers, deliberately:
   binding resolution and formatting, the timeline engine, take transitions,
   rundown timing.
 - **`scripts/verify-phase*.ts`** are phase-level acceptance suites. They are
-  real behavioural tests, not source greps, and CI runs both.
+  real behavioural tests, not source greps.
 
-CI additionally runs a `windows-latest` job, because the NDI FFI, WebView2
-capture and Spout code are all `#[cfg(windows)]` and cannot be compiled on the
-Linux jobs.
+> ### CI is configured but has never run
+>
+> `.github/workflows/ci.yml` defines Linux and `windows-latest` jobs, and they
+> are correct — but **every workflow run in this repository's history has
+> failed within about five seconds**, back to the first push. Each job reports
+> no runner, no steps and no logs, on Linux and Windows alike, so nothing is
+> being gated. Fix it in **Settings → Actions → General** (allow all actions)
+> and check the account's billing status; until a run goes green, treat these
+> workflows as unproven and run the suites locally. See `docs/AUDIT-2026-08.md`,
+> S0-20.
 
 The project's standing rule: **"it compiles" is never "it works."** Anything
 touching the output plane needs a check against a running app before it counts
