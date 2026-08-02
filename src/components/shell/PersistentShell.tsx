@@ -3,6 +3,7 @@ import { useDocStore, useDocStoreTemporal } from "@/document/store";
 import { initPersistence } from "@/document/persistence";
 import { ConnectorRuntimeHost } from "@/document/ConnectorRuntimeHost";
 import { isOutputServerDown, useOutputServerHealth } from "@/output/useOutputServerHealth";
+import { useWebglContextStats, WEBGL_CONTEXT_BUDGET } from "@/components/set3d/useWebglContextStats";
 import { useOutputStatus } from "@/output/useOutputStatus";
 import { initElectionFeed } from "@/ar-system/election/electionFeed";
 import { dataHub } from "@/ar-system/dataHub/dataHub";
@@ -56,6 +57,7 @@ export function PersistentShell() {
   const status = useOutputStatus();
   const outputHealth = useOutputServerHealth();
   const outputDown = isOutputServerDown(outputHealth);
+  const webgl = useWebglContextStats();
 
   useEffect(() => {
     initPersistence()
@@ -152,6 +154,18 @@ export function PersistentShell() {
           {ndi?.available ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
           NDI
         </div>
+        {/* Close to the browser's WebGL context ceiling. Past it Chromium
+            drops the OLDEST context without an error and that canvas simply
+            stops painting — which reads as a preview that "won't open". This
+            is the only warning an operator would otherwise get. */}
+        {webgl.nearBudget && (
+          <div
+            className="flex items-center gap-1.5 rounded border border-live-amber px-2 py-1 font-medium tracking-wide text-live-amber"
+            title={`${webgl.live} of ~${WEBGL_CONTEXT_BUDGET} WebGL contexts in use. Close a 3D preview surface (multiviewer, Studio editor, AR viewport) — past the budget the browser silently blanks the oldest canvas.`}
+          >
+            GPU {webgl.live}/{WEBGL_CONTEXT_BUDGET}
+          </div>
+        )}
         {/* An output plane that is down outranks every other indicator: with
             no sidecar, the ON-AIR lamp below is reporting on a server that is
             not running, so it must not be the loudest thing on screen. */}

@@ -17,6 +17,7 @@ import {
 } from "@/document/cameraMoves";
 import { computeArHiddenSet, type ArFocus } from "@/document/arFocus";
 import { SetEnvironmentView, SetNodesView } from "./SetNodes";
+import { registerWebglContext } from "./webglContext";
 import { SsrRealismEffect } from "./ssrEffect";
 
 /**
@@ -252,6 +253,10 @@ export function Set3dRenderer({
       camera={{ position: [0, 1.7, 6], fov: 50, near: 0.1, far: 200 }}
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
       style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      // Without a `webglcontextlost` handler a dropped context is completely
+      // silent: the canvas just stops painting, which reads as a preview that
+      // "won't open". See webglContext.ts.
+      onCreated={({ gl }) => registerWebglContext(gl.domElement, `set3d:${layer.name || layer.id}`)}
     >
       <RenderSettingsApplier exposure={render.exposure} shadows={render.shadows} />
       <SetEnvironmentView environment={environment} render={render} assets={assets} />

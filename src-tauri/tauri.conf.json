@@ -30,7 +30,7 @@
         "resizable": true,
         "decorations": false,
         "transparent": true,
-        "url": "/#/program"
+        "url": "/renderer.html#/program"
       },
       {
         "label": "preview",
@@ -38,7 +38,7 @@
         "width": 960,
         "height": 540,
         "resizable": true,
-        "url": "/#/preview"
+        "url": "/renderer.html#/preview"
       }
     ],
     "security": {

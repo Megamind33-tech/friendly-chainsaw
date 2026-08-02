@@ -7,6 +7,7 @@ import { useDocStore, findSetNode } from "@/document/store";
 import type { ID, Layer, SetNode, Transform3D } from "@/document/types";
 import { resolveDpr } from "@/document/qualityTiers";
 import { SetEnvironmentView, SetNodesView } from "./SetNodes";
+import { registerWebglContext } from "./webglContext";
 import { RenderSettingsApplier, SetPostEffects } from "./Set3dRenderer";
 
 const RAD2DEG = 180 / Math.PI;
@@ -169,6 +170,7 @@ export function Set3dEditor({
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
       onPointerMissed={() => selectSetNode(null)}
       className="h-full w-full"
+      onCreated={({ gl }) => registerWebglContext(gl.domElement, "set3d-editor")}
     >
       <RenderSettingsApplier exposure={render.exposure} shadows={render.shadows} />
       <SetEnvironmentView environment={environment} render={render} assets={assets} />
