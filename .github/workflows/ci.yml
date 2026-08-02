@@ -115,6 +115,21 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
+      # Type-checks the #[cfg(windows)] code — capture.rs, ndi.rs, spout.rs and
+      # the webview2-com/windows FFI — from the Linux runner, in seconds.
+      # The windows-latest job below is the real MSVC compile, but it is slower
+      # and queues; this catches the same class of error on every push without
+      # waiting for a Windows runner to free up.
+      - name: Install mingw-w64 (Windows cross-check)
+        run: sudo apt-get install -y mingw-w64
+
+      - name: Add Windows target
+        run: rustup target add x86_64-pc-windows-gnu
+
+      - name: cargo check (Windows target)
+        working-directory: src-tauri
+        run: cargo check --target x86_64-pc-windows-gnu
+
   verify-rust-windows:
     name: Rust (Windows — NDI / WebView2 / Spout)
     runs-on: windows-latest

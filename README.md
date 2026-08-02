@@ -62,9 +62,34 @@ Program therefore cannot drift — they run the identical `renderElement` builde
 
 ```bash
 bun install
+bun run doctor         # preflight — checks toolchain, ports, prerequisites
 bun run tauri dev      # full desktop app
 bun run dev            # Vite only (no Tauri shell)
 ```
+
+**Run `bun run doctor` first.** `tauri dev` compiles the entire Rust dependency
+tree before it can tell you a linker is missing, so a five-second prerequisite
+mistake otherwise costs ten minutes to discover. The doctor checks the Rust
+toolchain, your platform's build prerequisites, and whether ports 1423 / 4977 /
+9222 are already held by a stale process — then names the exact fix for
+anything that is wrong.
+
+First `tauri dev` takes 5–15 minutes to compile Rust; after that it is
+incremental.
+
+### Prerequisites
+
+| Platform | Needs |
+|---|---|
+| all | [Rust via rustup](https://rustup.rs) |
+| Windows | Visual Studio Build Tools, "Desktop development with C++" workload; WebView2 (ships with Win 11) |
+| macOS | `xcode-select --install` |
+| Linux | `libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev` |
+
+> `bun run preview` serves the built frontend in a browser with **no Tauri
+> backend** — no sidecar, no SQLite, no NDI, no IPC. The Control Room will show
+> `dbStatus: error`. It is only useful for eyeballing the renderer; anything
+> involving output needs `tauri dev`.
 
 ### Windows
 
@@ -119,9 +144,18 @@ bun run test:coverage
 bunx tsc --noEmit      # typecheck
 bun run build          # production build
 
-bun run scripts/verify-phase7.ts   # …through verify-phase10_2.ts
+bun run scripts/verify-phase7.ts   # …and the other verify-*.ts suites
 cd src-tauri && cargo test --lib
+
+bun run check:windows  # type-check the Windows-only FFI from any platform
 ```
+
+`check:windows` cross-compiles the `#[cfg(windows)]` code — `capture.rs`,
+`ndi.rs`, `spout.rs` and the `webview2-com`/`windows` FFI — against the
+`x86_64-pc-windows-gnu` target, so a Linux or macOS machine can catch a broken
+Windows build in seconds instead of discovering it on a Windows box. One-time
+setup: `rustup target add x86_64-pc-windows-gnu` plus `mingw-w64`. CI runs it
+on every push, alongside a real MSVC build on `windows-latest`.
 
 Two layers, deliberately:
 
