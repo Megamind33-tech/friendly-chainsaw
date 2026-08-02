@@ -15,7 +15,7 @@ import { formatBindingValue } from "@/ar-system/binding/format";
 import { assembleRenderEnvelope, type RenderEnvelope } from "./renderEnvelope";
 import { CURRENT_SCHEMA_VERSION, type Project, type ID, type SetNode } from "./types";
 import { compactProjectThumbnails } from "@/components/set3d/assetImport";
-import { loadExternalConnectorSettings } from "./externalConnector";
+import { loadConnectors } from "./connectors";
 import { useBroadcastStore } from "@/broadcast/broadcastStore";
 
 const AUTOSAVE_DEBOUNCE_MS = 700;
@@ -44,8 +44,16 @@ export interface ProgramEnvelope {
   arFocus: Record<ID, ArFocus>;
 }
 
-/** No prior schema versions exist yet — this is where future up-migrations plug in. */
-function migrateProjectDoc(doc: unknown, fromVersion: number): Project {
+/**
+ * No prior schema versions exist yet — this is where future up-migrations plug
+ * in.
+ *
+ * Exported for tests. This function decides whether an operator's saved show
+ * survives a relaunch: if `projectSchema` rejects a document that was in fact
+ * valid, the fallback silently replaces it with an empty default project and
+ * the work is gone. That failure mode is worth pinning directly.
+ */
+export function migrateProjectDoc(doc: unknown, fromVersion: number): Project {
   if (fromVersion !== CURRENT_SCHEMA_VERSION) {
     console.warn(`project schema_version ${fromVersion} has no migration path; loading as-is`);
   }
@@ -217,7 +225,7 @@ let initialized = false;
 let initPromise: Promise<void> | null = null;
 
 async function initPersistenceOnce(): Promise<void> {
-  await loadExternalConnectorSettings();
+  await loadConnectors();
   await useBroadcastStore.getState().loadSettings();
   const openProjectId = await getOpenProjectId();
 

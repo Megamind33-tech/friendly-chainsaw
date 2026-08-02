@@ -135,8 +135,12 @@ export function formatBindingValue(raw: string, format?: string): string {
     }, raw);
   }
   if (format.includes("{value:,}")) {
+    // A non-numeric value still has to be substituted. Falling through to the
+    // `{value}` replace below did NOT match `{value:,}`, so the placeholder
+    // survived and the literal text "{value:,}" went to air the moment a feed
+    // sent "—", "pending" or an empty string into a thousands-formatted field.
     const num = parseFloat(raw);
-    if (!Number.isNaN(num)) return format.replace("{value:,}", num.toLocaleString("en-US"));
+    return format.replace("{value:,}", Number.isNaN(num) ? raw : num.toLocaleString("en-US"));
   }
   return format.replace("{value}", raw);
 }

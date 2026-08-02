@@ -1,71 +1,17 @@
-import { create } from "zustand";
-import { sqliteSettingsRepository } from "@/adapters/sqliteStudioRepository";
 import { useDataStore, type SportId } from "./dataSources";
 import { FEED_IDS } from "./dataSources";
 
+/**
+ * Routing and file-import helpers shared by every data path.
+ *
+ * The single global `{ enabled, apiUrl, pollIntervalSec }` connector that used
+ * to live here is gone — see connectors.ts for the real multi-connector model
+ * with credentials, push transports and per-connector status. Its persisted
+ * settings are migrated on first load, so an operator does not lose a
+ * configured endpoint on upgrade.
+ */
+
 const SPORT_IDS: SportId[] = ["soccer", "basketball", "football", "baseball", "hockey", "tennis", "volleyball", "rugby"];
-const EXTERNAL_CONNECTOR_KEY = "external_connector";
-
-interface PersistedConnector {
-  enabled: boolean;
-  apiUrl: string;
-  pollIntervalSec: number;
-}
-
-export interface ExternalConnectorState {
-  enabled: boolean;
-  apiUrl: string;
-  pollIntervalSec: number;
-  lastSyncAt: number | null;
-  lastError: string | null;
-  setEnabled: (enabled: boolean) => void;
-  setApiUrl: (url: string) => void;
-  setPollIntervalSec: (sec: number) => void;
-  setLastSync: (at: number | null, error: string | null) => void;
-}
-
-export const useExternalConnector = create<ExternalConnectorState>((set) => ({
-  enabled: false,
-  apiUrl: "",
-  pollIntervalSec: 5,
-  lastSyncAt: null,
-  lastError: null,
-  setEnabled: (enabled) => set({ enabled }),
-  setApiUrl: (apiUrl) => set({ apiUrl }),
-  setPollIntervalSec: (pollIntervalSec) => set({ pollIntervalSec: Math.max(2, pollIntervalSec) }),
-  setLastSync: (lastSyncAt, lastError) => set({ lastSyncAt, lastError }),
-}));
-
-export async function loadExternalConnectorSettings(): Promise<void> {
-  try {
-    const raw = await sqliteSettingsRepository.get(EXTERNAL_CONNECTOR_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as PersistedConnector;
-    useExternalConnector.setState({
-      enabled: !!parsed.enabled,
-      apiUrl: parsed.apiUrl ?? "",
-      pollIntervalSec: Math.max(2, parsed.pollIntervalSec ?? 5),
-    });
-  } catch (err) {
-    console.warn("failed to load external connector settings", err);
-  }
-}
-
-export async function saveExternalConnectorSettings(): Promise<void> {
-  const { enabled, apiUrl, pollIntervalSec } = useExternalConnector.getState();
-  const payload: PersistedConnector = { enabled, apiUrl, pollIntervalSec };
-  await sqliteSettingsRepository.set(EXTERNAL_CONNECTOR_KEY, JSON.stringify(payload));
-}
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleExternalConnectorSave(): void {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveExternalConnectorSettings().catch((err) => console.error("external connector save failed", err));
-  }, 500);
-}
-
-useExternalConnector.subscribe(() => scheduleExternalConnectorSave());
 
 /** Flatten nested JSON into dotted keys for binding (e.g. squad.p8photo). */
 export function flattenJsonValues(data: unknown, prefix = ""): Record<string, string> {
@@ -204,13 +150,6 @@ export function mergeExternalValues(values: Record<string, string>): void {
   const bySource = routeExternalValues(values);
   if (Object.keys(bySource).length === 0) return;
   useDataStore.getState().mergeSourceValues(bySource);
-}
-
-export async function fetchExternalApi(url: string): Promise<Record<string, string>> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  const json = await res.json();
-  return flattenJsonValues(json);
 }
 
 export async function importCsvFile(file: File): Promise<number> {

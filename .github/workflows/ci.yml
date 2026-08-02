@@ -57,23 +57,20 @@ jobs:
       - name: Production build
         run: bun run build
 
-      - name: Phase 7 verification
-        run: bun run scripts/verify-phase7.ts
-
-      - name: Phase 8 verification
-        run: bun run scripts/verify-phase8.ts
-
-      - name: Phase 9 verification
-        run: bun run scripts/verify-phase9.ts
-
-      - name: Phase 10 verification
-        run: bun run scripts/verify-phase10.ts
-
-      - name: Phase 10.1 verification
-        run: bun run scripts/verify-phase10_1.ts
-
-      - name: Phase 10.2 verification
-        run: bun run scripts/verify-phase10_2.ts
+      # Every verification script, not a hand-maintained subset. Six of these
+      # (phase3, phase5, ar-asset-builder, ar-election-slice, sports-ar-models,
+      # studio-realism) were never wired in, and verify-phase3 had been failing
+      # unnoticed as a result — an unclamped opacity overshoot and a
+      # buildDataValues call that threw. Globbing means a new script is covered
+      # the moment it lands.
+      - name: Verification suites
+        run: |
+          status=0
+          for f in scripts/verify-*.ts; do
+            echo "--- $f"
+            bun run "$f" || status=1
+          done
+          exit $status
 
   verify-rust:
     name: Rust (cargo check + tests)

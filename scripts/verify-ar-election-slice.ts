@@ -61,8 +61,21 @@ assert(rejected !== null && rejected["election.candidates.0.name"] === lkgBefore
 const seqReject = dataHub.ingest("election", ELECTION_SAMPLE_JSON, 1);
 assert(seqReject !== null && seqReject["election.candidates.0.name"] === lkgBefore["election.candidates.0.name"], "Out-of-order sequence rejected");
 
+// This assertion used to read `status === "live"` after publishing the SAMPLE
+// payload — i.e. it pinned the exact defect AUDIT-2026-08.md S0-2 fixed, where
+// invented vote totals reached the on-air status indicator flagged as a real
+// feed. The contract now is that the hub carries the payload's OWN attribution.
 publishElectionData(ELECTION_SAMPLE_JSON, 3);
-assert(dataHub.getConnection("election")?.status === "live", "Valid ingest sets live status");
+assert(
+  dataHub.getConnection("election")?.status === "sample",
+  "Sample payload ingests as 'sample', never 'live'",
+);
+
+publishElectionData({ ...ELECTION_SAMPLE_JSON, sourceStatus: "live" }, 4);
+assert(dataHub.getConnection("election")?.status === "live", "A payload declaring itself live reads live");
+
+publishElectionData({ ...ELECTION_SAMPLE_JSON, sourceStatus: "simulated" }, 5);
+assert(dataHub.getConnection("election")?.status === "simulated", "Simulated data never reads live");
 
 // Binding engine
 console.log("\nBindings:");
