@@ -607,6 +607,14 @@ export type LayerProps =
        * head. Optional so every existing project keeps its authored framing.
        */
       cameraTracking?: boolean;
+      /**
+       * Measured zoom-encoder → field-of-view points for the tracked camera's
+       * lens (see `fovForZoom`). Lives on the document rather than in the
+       * FreeD listener's settings so it rides the render envelope to every
+       * consumer — including the OBS Browser Source, which has no IPC and
+       * could not otherwise be told about it.
+       */
+      lensCalibration?: { zoomRaw: number; fovDeg: number }[];
       render: SetRenderSettings;
     }
   | { kind: "map" }

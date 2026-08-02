@@ -210,6 +210,12 @@ interface Actions {
   setActiveSetCamera: (sceneId: ID, layerId: ID, cameraId: ID | null) => void;
   /** Lock this set's render camera to the tracked studio camera (freed.rs). */
   setSetCameraTracking: (sceneId: ID, layerId: ID, tracking: boolean) => void;
+  /** Replace the tracked lens's measured zoom-encoder -> FOV points. */
+  setSetLensCalibration: (
+    sceneId: ID,
+    layerId: ID,
+    points: { zoomRaw: number; fovDeg: number }[],
+  ) => void;
   addAsset: (asset: Asset) => void;
   updateAsset: (assetId: ID, updates: Partial<Asset>) => void;
   removeAsset: (assetId: ID) => void;
@@ -766,6 +772,24 @@ export const useDocStore = create<Store>()(
           // Written as undefined rather than false when off, so a project that
           // never touches tracking serialises byte-identically to before.
           props.cameraTracking = tracking ? true : undefined;
+          state.dirty = true;
+        }),
+
+      setSetLensCalibration: (sceneId, layerId, points) =>
+        set((state) => {
+          if (!state.project) return;
+          const scene = findScene(state.project, sceneId);
+          const layer = scene && findLayer(scene, layerId);
+          const props = layer && set3dPropsOf(layer);
+          if (!props) return;
+          // Stored sorted so the document reads the way an operator entered it
+          // conceptually (wide to long), independent of click order.
+          const clean = points
+            .filter((p) => Number.isFinite(p.zoomRaw) && Number.isFinite(p.fovDeg))
+            .sort((a, b) => a.zoomRaw - b.zoomRaw);
+          // Undefined rather than [] when empty, so an uncalibrated set
+          // serialises exactly as it did before calibration existed.
+          props.lensCalibration = clean.length > 0 ? clean : undefined;
           state.dirty = true;
         }),
 

@@ -10,6 +10,7 @@ import { ImagePickerDialog } from "./ImagePickerDialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
 import { analyseSurfaceResolution } from "@/components/set3d/displayTextures";
 import { ThumbSlot } from "@/components/ui/broadcast";
 import { flattenSetNodes } from "@/ar-engine/nodeUtils";
@@ -427,6 +428,7 @@ export function SetNodeInspector({
   const commitNodeTransform = useDocStore((s) => s.commitNodeTransform);
   const setActiveSetCamera = useDocStore((s) => s.setActiveSetCamera);
   const setSetCameraTracking = useDocStore((s) => s.setSetCameraTracking);
+  const setSetLensCalibration = useDocStore((s) => s.setSetLensCalibration);
   const project = useDocStore((s) => s.project);
 
   const setField = (updates: Partial<SetNode>) => updateSetNode(sceneId, layerId, node.id, updates);
@@ -436,6 +438,7 @@ export function SetNodeInspector({
   const layer = project?.scenes.find((s) => s.id === sceneId)?.layers.find((l) => l.id === layerId);
   const activeCameraId = layer?.props.kind === "set3d" ? layer.props.activeCameraId : null;
   const cameraTracking = layer?.props.kind === "set3d" ? layer.props.cameraTracking === true : false;
+  const lensCalibration = (layer?.props.kind === "set3d" ? layer.props.lensCalibration : undefined) ?? [];
 
   return (
     <div className="h-full overflow-y-auto text-xs">
@@ -612,10 +615,85 @@ export function SetNodeInspector({
             {cameraTracking ? "◉ TRACKED CAMERA (click to release)" : "Follow tracked camera (AR)"}
           </button>
           {cameraTracking && (
-            <div className="font-mono text-[9px] leading-relaxed text-text-muted">
-              Authored camera nodes and moves are ignored for this set while tracking is on. Start the FreeD
-              listener in Settings.
-            </div>
+            <>
+              <div className="font-mono text-[9px] leading-relaxed text-text-muted">
+                Authored camera nodes and moves are ignored for this set while tracking is on. Start the FreeD
+                listener in Settings.
+              </div>
+
+              {/* Lens calibration. Two or more measured points give a real
+                  piecewise-linear curve; below that the renderer falls back to
+                  a linear encoder->FOV map, which is only an approximation
+                  because a real lens's zoom curve is markedly non-linear. */}
+              <div className="space-y-1 rounded border border-border-subtle p-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[9px] text-text-muted">LENS CALIBRATION</span>
+                  <span
+                    className={`font-mono text-[9px] ${
+                      lensCalibration.length >= 2 ? "text-accent-blue-bright" : "text-live-amber"
+                    }`}
+                  >
+                    {lensCalibration.length >= 2 ? `${lensCalibration.length} points` : "linear fallback"}
+                  </span>
+                </div>
+                <div className="font-mono text-[9px] leading-relaxed text-text-muted">
+                  Zoom the real lens to a position, read its encoder value from Settings, measure the resulting
+                  field of view, and add the pair.
+                </div>
+                {lensCalibration.map((point, i) => (
+                  <div key={`${point.zoomRaw}-${i}`} className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      value={point.zoomRaw}
+                      onChange={(e) => {
+                        const next = lensCalibration.map((p, j) =>
+                          j === i ? { ...p, zoomRaw: Number(e.target.value) } : p,
+                        );
+                        setSetLensCalibration(sceneId, layerId, next);
+                      }}
+                      className="h-6 min-w-0 flex-1 border-border-subtle bg-bg-surface font-mono text-[10px]"
+                      title="Zoom encoder value"
+                    />
+                    <Input
+                      type="number"
+                      value={point.fovDeg}
+                      onChange={(e) => {
+                        const next = lensCalibration.map((p, j) =>
+                          j === i ? { ...p, fovDeg: Number(e.target.value) } : p,
+                        );
+                        setSetLensCalibration(sceneId, layerId, next);
+                      }}
+                      className="h-6 w-16 border-border-subtle bg-bg-surface font-mono text-[10px]"
+                      title="Field of view at this zoom, in degrees"
+                    />
+                    <button
+                      onClick={() =>
+                        setSetLensCalibration(
+                          sceneId,
+                          layerId,
+                          lensCalibration.filter((_, j) => j !== i),
+                        )
+                      }
+                      className="shrink-0 rounded p-0.5 text-text-muted hover:bg-live-red/20 hover:text-live-red"
+                      title="Remove point"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() =>
+                    setSetLensCalibration(sceneId, layerId, [
+                      ...lensCalibration,
+                      { zoomRaw: 0, fovDeg: 50 },
+                    ])
+                  }
+                  className="w-full rounded border border-border-subtle px-2 py-1 font-mono text-[9px] text-text-muted-alt hover:border-accent-blue"
+                >
+                  + Add measured point
+                </button>
+              </div>
+            </>
           )}
         </Section>
       )}

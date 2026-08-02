@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { isPoseFresh, parseTrackedPose, TRACKING_STALE_MS, type TrackedPose } from "./tracking";
+import { fovForZoom, isPoseFresh, parseTrackedPose, TRACKING_STALE_MS, type TrackedPose } from "./tracking";
 import { poseToCameraTransform, trackedFov } from "@/components/set3d/TrackedCameraRig";
 
 function pose(over: Partial<TrackedPose> = {}): TrackedPose {
@@ -138,5 +138,99 @@ describe("trackedFov", () => {
 
   it("degenerates safely when min and max encoder values are equal", () => {
     expect(trackedFov(123, { fovAtZoomMin: 42, zoomMinRaw: 5, zoomMaxRaw: 5 })).toBe(42);
+  });
+
+  it("prefers a measured calibration curve over the linear fallback", () => {
+    const opts = { fovAtZoomMin: 50, fovAtZoomMax: 10, zoomMinRaw: 0, zoomMaxRaw: 1000 };
+    const withCurve = {
+      ...opts,
+      lensCalibration: [
+        { zoomRaw: 0, fovDeg: 55 },
+        { zoomRaw: 1000, fovDeg: 5 },
+      ],
+    };
+    expect(trackedFov(0, withCurve)).toBe(55);
+    expect(trackedFov(1000, withCurve)).toBe(5);
+    // Same encoder value, different answer than the linear map would give.
+    expect(trackedFov(0, withCurve)).not.toBeCloseTo(trackedFov(0, opts));
+  });
+});
+
+describe("fovForZoom — lens calibration", () => {
+  // Deliberately NON-linear: a real lens's zoom curve is, and a linear example
+  // would make the "follows its own shape" test below vacuous.
+  const curve = [
+    { zoomRaw: 0, fovDeg: 55 },
+    { zoomRaw: 500, fovDeg: 40 },
+    { zoomRaw: 1000, fovDeg: 5 },
+  ];
+
+  it("returns a measured point exactly", () => {
+    expect(fovForZoom(curve, 0, 99)).toBe(55);
+    expect(fovForZoom(curve, 500, 99)).toBe(40);
+    expect(fovForZoom(curve, 1000, 99)).toBe(5);
+  });
+
+  it("interpolates linearly between measured points", () => {
+    expect(fovForZoom(curve, 250, 99)).toBeCloseTo(47.5);
+    expect(fovForZoom(curve, 750, 99)).toBeCloseTo(22.5);
+  });
+
+  it("follows the curve's own shape rather than one straight line", () => {
+    // The whole point of a calibration table: a real lens is non-linear, so
+    // the midpoint of the encoder range is NOT the midpoint of the FOV range.
+    const straightLineMidpoint = (55 + 5) / 2;
+    expect(fovForZoom(curve, 500, 99)).not.toBeCloseTo(straightLineMidpoint);
+  });
+
+  it("holds the end value outside the measured range instead of extrapolating", () => {
+    // Extrapolating a non-linear curve past where it was measured produces
+    // confidently wrong numbers, and at the long end a negative FOV.
+    expect(fovForZoom(curve, -9999, 99)).toBe(55);
+    expect(fovForZoom(curve, 9_999_999, 99)).toBe(5);
+    expect(fovForZoom(curve, 9_999_999, 99)).toBeGreaterThan(0);
+  });
+
+  it("sorts unordered points rather than trusting entry order", () => {
+    const unordered = [curve[2], curve[0], curve[1]];
+    expect(fovForZoom(unordered, 250, 99)).toBeCloseTo(47.5);
+  });
+
+  it("falls back until there are enough points to define a curve", () => {
+    // An operator part-way through calibrating still needs a usable camera.
+    expect(fovForZoom(undefined, 500, 42)).toBe(42);
+    expect(fovForZoom([], 500, 42)).toBe(42);
+  });
+
+  it("uses a single point as a constant", () => {
+    expect(fovForZoom([{ zoomRaw: 0, fovDeg: 33 }], 999, 42)).toBe(33);
+  });
+
+  it("ignores non-finite entries instead of poisoning the frustum", () => {
+    const dirty = [...curve, { zoomRaw: Number.NaN, fovDeg: 20 }];
+    expect(fovForZoom(dirty, 250, 99)).toBeCloseTo(47.5);
+    expect(fovForZoom([{ zoomRaw: Number.NaN, fovDeg: Number.NaN }], 1, 42)).toBe(42);
+  });
+
+  it("survives duplicate encoder readings without dividing by zero", () => {
+    const dup = [
+      { zoomRaw: 0, fovDeg: 55 },
+      { zoomRaw: 500, fovDeg: 40 },
+      { zoomRaw: 500, fovDeg: 35 },
+      { zoomRaw: 1000, fovDeg: 5 },
+    ];
+    const fov = fovForZoom(dup, 500, 99);
+    expect(Number.isFinite(fov)).toBe(true);
+  });
+
+  it("stays monotonic across a full zoom sweep for a monotonic curve", () => {
+    // Any non-monotonic output would make a graphic pulse in scale during a
+    // smooth zoom.
+    let previous = Infinity;
+    for (let z = 0; z <= 1000; z += 25) {
+      const fov = fovForZoom(curve, z, 99);
+      expect(fov).toBeLessThanOrEqual(previous);
+      previous = fov;
+    }
   });
 });

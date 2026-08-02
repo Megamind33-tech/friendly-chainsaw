@@ -75,6 +75,61 @@ export function parseTrackedPose(raw: string): TrackedPose | null {
   };
 }
 
+/**
+ * One measured point on a lens's zoom curve: at this encoder reading, the lens
+ * has this horizontal field of view.
+ *
+ * Measured, not derived. A real lens's zoom curve is markedly non-linear, so a
+ * straight encoder→FOV line is only ever an approximation, and graphics drift
+ * in scale through a zoom under it. Two or more points make the mapping
+ * piecewise-linear, which is what a lens file actually is.
+ */
+export interface LensCalibrationPoint {
+  zoomRaw: number;
+  fovDeg: number;
+}
+
+/**
+ * Field of view for a zoom encoder reading, by piecewise-linear interpolation
+ * between measured points.
+ *
+ * Outside the measured range the nearest point's value is held rather than
+ * extrapolated: extrapolating a non-linear curve past where it was measured
+ * produces confidently wrong numbers, and at the long end can produce a
+ * negative FOV and an unusable frustum. Holding is visibly wrong at the
+ * extremes, which is the better failure.
+ *
+ * Fewer than two points cannot define a curve, so the caller's fallback is
+ * used — an operator part-way through calibrating still gets a usable camera.
+ */
+export function fovForZoom(
+  points: LensCalibrationPoint[] | undefined,
+  zoomRaw: number,
+  fallback: number,
+): number {
+  if (!points || points.length === 0) return fallback;
+  const valid = points
+    .filter((p) => Number.isFinite(p.zoomRaw) && Number.isFinite(p.fovDeg))
+    .sort((a, b) => a.zoomRaw - b.zoomRaw);
+  if (valid.length === 0) return fallback;
+  if (valid.length === 1) return valid[0].fovDeg;
+
+  if (zoomRaw <= valid[0].zoomRaw) return valid[0].fovDeg;
+  if (zoomRaw >= valid[valid.length - 1].zoomRaw) return valid[valid.length - 1].fovDeg;
+
+  for (let i = 1; i < valid.length; i++) {
+    const hi = valid[i];
+    if (zoomRaw > hi.zoomRaw) continue;
+    const lo = valid[i - 1];
+    const span = hi.zoomRaw - lo.zoomRaw;
+    // Duplicate encoder readings would divide by zero; take the later point.
+    if (span === 0) return hi.fovDeg;
+    const t = (zoomRaw - lo.zoomRaw) / span;
+    return lo.fovDeg + (hi.fovDeg - lo.fovDeg) * t;
+  }
+  return valid[valid.length - 1].fovDeg;
+}
+
 /** A tracked feed that has stopped delivering must stop being treated as live. */
 export function isPoseFresh(pose: TrackedPose | null, now: number, staleMs = TRACKING_STALE_MS): boolean {
   return pose !== null && now - pose.receivedAtMs <= staleMs;

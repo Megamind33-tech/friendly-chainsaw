@@ -69,7 +69,8 @@ Different category. Listed to be explicit about the boundary rather than to impl
 | LTC / VITC timecode | 🔴 | ✅ | Blocks frame-accurate playout |
 | SMPTE 2110 / SDI | ⬛ | ✅ | Category boundary |
 | Camera tracking (FreeD/Mo-Sys/Stype) | 🟡 FreeD D1 ingest ships; unproven vs hardware | ✅ | See below |
-| Lens distortion / calibration | 🔴 | ✅ | Blocks real AR |
+| Lens calibration (zoom → FOV) | 🟡 mechanism ships; needs measuring | ✅ | Drift through zoom until measured |
+| Lens distortion model | 🔴 | ✅ | Graphics will not match a wide lens at frame edges |
 | Chroma keyer | ⬛ delegated to OBS/vMix | ✅ | Reasonable delegation |
 | Virtual set / 3D scenes | ✅ R3F + `sets/` | ✅ | Real, at web-engine fidelity |
 | AR graphics over live camera | 🟡 tracked camera ships; no lens calibration | ✅ | See below |
@@ -87,7 +88,7 @@ Transport is SSE over the sidecar, matching `/document/stream`, deliberately: th
 **What is still missing, and it matters:**
 
 1. **Never validated against real hardware.** The decoder is tested against its own builder — round-trip, sign extension, unit conversion, checksum, malformed-packet rejection — which proves internal consistency and *cannot* prove wire conformance with a physical tracker. The Settings panel therefore shows accepted/rejected packet counters: a rising reject count is the signal that the wire format does not match. This is the single acceptance criterion before it is trusted on air.
-2. **No lens calibration.** Zoom and focus arrive as raw encoder counts. Mapping them to a real focal length needs a per-lens calibration table; what ships is a linear encoder→FOV map an operator sets, labelled as such rather than pretending to be a lens file. Without real calibration, graphics will drift in scale through a zoom.
+2. **Lens calibration ships, but the measurements do not.** A per-set table of measured zoom-encoder → FOV points is interpolated piecewise-linearly and rides the render envelope, so OBS gets the same curve as the Program window. Two or more points engage it; below that a linear approximation remains as a labelled fallback. Someone still has to sit down with the real lens and measure the points — until they do, graphics drift in scale through a zoom.
 3. **No lens distortion model.** Graphics are rendered to an ideal pinhole camera, so they will not match a wide lens's barrel distortion at the frame edges.
 
 So: the architecture is real and the protocol is implemented, but this is **tracked-camera AR without lens correction**, and it should be described that way. It is no longer accurate to say the product has no camera tracking; it is not yet accurate to claim parity with Tier-3 AR.

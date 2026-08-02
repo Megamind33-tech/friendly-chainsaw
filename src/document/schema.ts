@@ -407,6 +407,10 @@ const layerPropsSchema = z.discriminatedUnion("kind", [
     activeCameraId: z.string().nullable().default(null),
     /** Lock the render camera to the tracked studio camera (see freed.rs). */
     cameraTracking: z.boolean().optional(),
+    /** Measured zoom-encoder -> FOV points for the tracked lens. */
+    lensCalibration: z
+      .array(z.object({ zoomRaw: z.number().finite(), fovDeg: z.number().finite() }))
+      .optional(),
     render: setRenderSettingsSchema.default(() => defaultSetRenderSettings()),
   }),
   z.object({ kind: z.literal("map") }),

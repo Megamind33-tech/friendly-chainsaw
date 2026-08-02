@@ -287,7 +287,7 @@ export function Set3dRenderer({
           followed, an authored move would fight it and the graphics would
           slide against the real picture. */}
       {tracked ? (
-        <TrackedCameraRig />
+        <TrackedCameraRig lensCalibration={layer.props.lensCalibration} />
       ) : orbitLive ? (
         <CameraOrbitRig key={`orbit-${cameraOrbit!.startedAt}`} orbit={cameraOrbit!} />
       ) : moveLive ? (

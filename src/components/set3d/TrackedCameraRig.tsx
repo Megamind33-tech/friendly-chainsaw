@@ -4,8 +4,10 @@ import { useFrame } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 import {
   acquireTrackingStream,
+  fovForZoom,
   getLatestPose,
   isPoseFresh,
+  type LensCalibrationPoint,
   type TrackedPose,
 } from "@/document/tracking";
 
@@ -49,10 +51,13 @@ export function poseToCameraTransform(pose: TrackedPose): {
 
 export interface TrackedCameraRigProps {
   /**
-   * Encoder-to-field-of-view mapping. A real lens needs a calibration table;
-   * until one exists this is a straight linear map an operator sets, and it is
-   * labelled as such rather than pretending to be a lens file.
+   * Measured zoom-encoder → FOV points for this lens. Two or more points give
+   * a real piecewise-linear curve; anything less falls back to the linear map
+   * below, which is only ever an approximation because a real lens's zoom
+   * curve is markedly non-linear.
    */
+  lensCalibration?: LensCalibrationPoint[];
+  /** Linear fallback, used until a lens has at least two measured points. */
   fovAtZoomMin?: number;
   fovAtZoomMax?: number;
   /** Encoder value that corresponds to `fovAtZoomMin` / `fovAtZoomMax`. */
@@ -60,13 +65,23 @@ export interface TrackedCameraRigProps {
   zoomMaxRaw?: number;
 }
 
-export function trackedFov(
-  zoomRaw: number,
-  { fovAtZoomMin = 50, fovAtZoomMax = 10, zoomMinRaw = 0, zoomMaxRaw = 0xffffff }: TrackedCameraRigProps,
-): number {
-  if (zoomMaxRaw === zoomMinRaw) return fovAtZoomMin;
-  const t = THREE.MathUtils.clamp((zoomRaw - zoomMinRaw) / (zoomMaxRaw - zoomMinRaw), 0, 1);
-  return fovAtZoomMin + (fovAtZoomMax - fovAtZoomMin) * t;
+export function trackedFov(zoomRaw: number, props: TrackedCameraRigProps): number {
+  const {
+    lensCalibration,
+    fovAtZoomMin = 50,
+    fovAtZoomMax = 10,
+    zoomMinRaw = 0,
+    zoomMaxRaw = 0xffffff,
+  } = props;
+
+  const linear = (() => {
+    if (zoomMaxRaw === zoomMinRaw) return fovAtZoomMin;
+    const t = THREE.MathUtils.clamp((zoomRaw - zoomMinRaw) / (zoomMaxRaw - zoomMinRaw), 0, 1);
+    return fovAtZoomMin + (fovAtZoomMax - fovAtZoomMin) * t;
+  })();
+
+  // A measured curve always wins over the linear approximation.
+  return fovForZoom(lensCalibration, zoomRaw, linear);
 }
 
 export function TrackedCameraRig(props: TrackedCameraRigProps) {

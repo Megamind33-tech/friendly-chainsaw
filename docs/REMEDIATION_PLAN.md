@@ -33,8 +33,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **R5 (part)** | Connector transport — failure classification and credential scrubbing under real HTTP conditions | `connectorRuntime.test.ts` — 18 tests |
 | **R4** | `/status` reports real NDI sent-frame rate alongside — never merged into — the page-level signal | `cargo check --tests`; **live check required** |
 | **R5 (part)** | Connector transport extracted from its React effect and made injectable; SSE/WebSocket reconnect, backoff and teardown now covered | `connectorTransport.test.ts` — 20 tests |
+| **R7 (part)** | Lens calibration — measured zoom-encoder → FOV curve replaces the linear approximation | `tracking.test.ts` — 11 further tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 273/273.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 284/284.
 
 ---
 
@@ -232,9 +233,12 @@ AR set and an untracked backplate at once. 15 Rust tests + 15 TS tests.
    rising *accepted* count means the format matches, a rising *rejected* count
    means it does not. Verify the axis convention visually — a graphic placed on
    the studio floor must stay on the floor through a full pan and tilt.
-2. **Lens calibration.** Zoom/focus arrive as raw encoder counts; what ships is
-   a linear encoder→FOV map, labelled as such. Real lenses need a calibration
-   table or graphics drift in scale through a zoom.
+2. ~~**Lens calibration.**~~ Done. A per-set table of measured
+   zoom-encoder → FOV points is interpolated piecewise-linearly and rides the
+   render envelope, so OBS gets the same curve as the Program window. Two or
+   more points engage it; below that the linear approximation remains as a
+   labelled fallback. **Measuring the actual points still requires the real
+   lens** — the mechanism ships, the data cannot.
 3. **Lens distortion.** Graphics render to an ideal pinhole camera, so they will
    not match a wide lens's barrel distortion at frame edges.
 
