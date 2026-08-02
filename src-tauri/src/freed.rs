@@ -195,6 +195,10 @@ pub struct FreedStatus {
     pub enabled: bool,
     pub port: u16,
     pub listening: bool,
+    /// True while the built-in synthetic tracker is emitting. Reported so the
+    /// UI can never show generated motion as a real camera — the same rule the
+    /// election feed had to be fixed to obey (AUDIT-2026-08.md S0-2).
+    pub simulated: bool,
     /// Populated only when the socket could not be opened.
     pub error: Option<String>,
     pub packets_received: u64,
@@ -209,6 +213,7 @@ pub struct FreedStatus {
 pub struct FreedState {
     pub config: FreedConfig,
     pub listening: bool,
+    pub simulated: bool,
     pub error: Option<String>,
     pub packets_received: u64,
     pub packets_rejected: u64,
@@ -221,6 +226,7 @@ impl FreedState {
             enabled: self.config.enabled,
             port: self.config.port,
             listening: self.listening,
+            simulated: self.simulated,
             error: self.error.clone(),
             packets_received: self.packets_received,
             packets_rejected: self.packets_rejected,
@@ -592,4 +598,92 @@ pub fn set_freed_config(
     }
     spawn_listener(state.inner().clone(), broadcast.inner().clone(), handle.inner().clone());
     Ok(crate::lock_recover(&state).snapshot())
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic tracker
+// ---------------------------------------------------------------------------
+
+/// Emit generated FreeD packets at the configured port, over loopback.
+///
+/// Deliberately sends REAL datagrams to the real listener rather than
+/// injecting poses directly into the state. That way it exercises the entire
+/// chain an actual tracker would — encode, UDP, parse, checksum, camera-id
+/// filter, SSE fan-out, render camera — so a green result here means the path
+/// works, not merely that the renderer can be fed.
+///
+/// It cannot prove wire conformance: it speaks this module's own encoder, so
+/// it validates the plumbing and not the specification (see the module header).
+///
+/// `simulated` is surfaced in the status so the UI can never present generated
+/// motion as a real camera.
+pub fn spawn_simulator(
+    state: SharedFreedState,
+    handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+) {
+    if let Some(previous) = crate::lock_recover(&handle).take() {
+        previous.abort();
+    }
+    let port = crate::lock_recover(&state).config.port;
+    crate::lock_recover(&state).simulated = true;
+
+    let task = tauri::async_runtime::spawn(async move {
+        let socket = match tokio::net::UdpSocket::bind(("127.0.0.1", 0)).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("freed simulator: could not open a sending socket: {e}");
+                crate::lock_recover(&state).simulated = false;
+                return;
+            }
+        };
+        let target = format!("127.0.0.1:{port}");
+        // 50 Hz — a broadcast camera rate, so the timing the renderer sees
+        // matches what a real tracker would produce.
+        let mut ticker = tokio::time::interval(std::time::Duration::from_millis(20));
+        let mut t: f64 = 0.0;
+        loop {
+            ticker.tick().await;
+            t += 0.02;
+            // A slow arc with a gentle tilt and a breathing zoom: enough motion
+            // to make a mis-mapped axis or a wrong Euler order obvious on
+            // screen, slow enough to watch.
+            let pose = FreedPose {
+                camera_id: 1,
+                pan_deg: 30.0 * (t * 0.25).sin(),
+                tilt_deg: -8.0 + 5.0 * (t * 0.17).cos(),
+                roll_deg: 0.0,
+                x_m: 2.0 * (t * 0.25).sin(),
+                y_m: -3.5,
+                z_m: 1.6,
+                zoom_raw: (8_000_000.0 + 4_000_000.0 * (t * 0.2).sin()) as u32,
+                focus_raw: 0,
+                received_at_ms: 0,
+            };
+            if socket.send_to(&build_freed_d1(&pose), &target).await.is_err() {
+                // The listener is not up; keep trying rather than dying, so
+                // starting the simulator before the listener still works.
+                continue;
+            }
+        }
+    });
+    *crate::lock_recover(&handle) = Some(task);
+}
+
+pub type FreedSimHandle = Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>;
+
+#[tauri::command]
+pub fn set_freed_simulator(
+    enabled: bool,
+    state: tauri::State<'_, SharedFreedState>,
+    sim: tauri::State<'_, FreedSimHandle>,
+) -> FreedStatus {
+    if enabled {
+        spawn_simulator(state.inner().clone(), sim.inner().clone());
+    } else {
+        if let Some(task) = crate::lock_recover(&sim).take() {
+            task.abort();
+        }
+        crate::lock_recover(&state).simulated = false;
+    }
+    crate::lock_recover(&state).snapshot()
 }

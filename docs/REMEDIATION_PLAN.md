@@ -229,6 +229,12 @@ AR set and an untracked backplate at once. 15 Rust tests + 15 TS tests.
 
 **Blocking follow-ups before this is trusted on air:**
 
+0. **Bench-test with the built-in simulator first** (Settings → Camera Tracking
+   → Simulate a tracker). It sends real datagrams to the real listener, so it
+   proves the plumbing — encode, UDP, checksum, filter, SSE, render camera —
+   before any hardware is involved. If a graphic does not stay planted under
+   simulated motion, the axis convention or Euler order is wrong and no tracker
+   will fix it.
 1. **Validate against real hardware.** The decoder is tested against its own
    builder, which proves internal consistency and cannot prove wire conformance.
    Point a real Mo-Sys/Stype/Ncam feed at it and watch the Settings panel: a

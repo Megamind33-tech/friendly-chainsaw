@@ -95,6 +95,21 @@ If the Control Room shows an **OUTPUT DOWN** banner, the sidecar could not claim
 port 4977 — almost always a previous `broadcast-engine.exe` that outlived its
 window. Hover the banner for the specific reason.
 
+## Testing tracking without a tracker
+
+**Settings → Camera Tracking → Start listening → "Simulate a tracker"** emits
+generated FreeD packets to the listener over loopback. It sends *real*
+datagrams to the *real* socket, so it exercises the whole chain — encode, UDP,
+checksum, camera-id filter, SSE fan-out, render camera — rather than injecting
+poses into the renderer.
+
+The status badge reads **SIMULATED**, never "Tracking", and it says so in amber
+under the button. Generated motion must never be mistakable for a real camera.
+
+What it proves: the plumbing works end to end. What it cannot prove: wire
+conformance with a physical tracker, since it speaks this app's own encoder.
+That still needs real hardware.
+
 ## Testing
 
 ```bash

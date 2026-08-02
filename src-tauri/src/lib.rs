@@ -1350,6 +1350,7 @@ pub fn run() {
     // stalls briefly resumes on the current pose instead of dropping the feed.
     let freed_broadcast: freed::FreedBroadcast = Arc::new(tokio::sync::broadcast::channel(256).0);
     let freed_task: freed::FreedTaskHandle = Arc::new(Mutex::new(None));
+    let freed_sim: freed::FreedSimHandle = Arc::new(Mutex::new(None));
     let output_health: OutputHealthState = Arc::new(Mutex::new(OutputServerHealth {
         state: OutputServerState::Starting,
         addr: OUTPUT_SERVER_ADDR,
@@ -1417,6 +1418,7 @@ pub fn run() {
         .manage::<freed::SharedFreedState>(freed_state.clone())
         .manage::<freed::FreedBroadcast>(freed_broadcast.clone())
         .manage::<freed::FreedTaskHandle>(freed_task.clone())
+        .manage::<freed::FreedSimHandle>(freed_sim.clone())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1441,6 +1443,7 @@ pub fn run() {
             get_output_server_health,
             freed::get_freed_status,
             freed::set_freed_config,
+            freed::set_freed_simulator,
             spout::get_spout_status,
             rundowncloud::get_rundowncloud_status,
             rundowncloud::set_rundowncloud_config,

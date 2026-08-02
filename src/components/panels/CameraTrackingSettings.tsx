@@ -29,6 +29,8 @@ interface FreedStatus {
   enabled: boolean;
   port: number;
   listening: boolean;
+  /** True while the built-in synthetic tracker is emitting. */
+  simulated: boolean;
   error: string | null;
   packetsReceived: number;
   packetsRejected: number;
@@ -98,7 +100,22 @@ export function CameraTrackingSettings() {
     }
   };
 
-  const live = status?.listening && status.packetsReceived > 0;
+  const receiving = status?.listening && status.packetsReceived > 0;
+  const simulated = status?.simulated === true;
+  // Generated motion is never presented as a real camera — the same rule the
+  // election feed had to be fixed to obey.
+  const live = receiving && !simulated;
+
+  const toggleSimulator = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      setStatus(await invoke<FreedStatus>("set_freed_simulator", { enabled }));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -106,21 +123,25 @@ export function CameraTrackingSettings() {
         <span className="font-mono text-[10px] tracking-wide text-text-muted-alt">CAMERA TRACKING (FreeD)</span>
         <span
           className={`rounded border px-1.5 py-0.5 font-mono text-[9px] tracking-wide ${
-            live
-              ? "border-accent-blue text-accent-blue-bright"
-              : status?.listening
-                ? "border-live-amber text-live-amber"
-                : "border-border-subtle text-text-muted"
+            simulated
+              ? "border-live-amber text-live-amber"
+              : live
+                ? "border-accent-blue text-accent-blue-bright"
+                : status?.listening
+                  ? "border-live-amber text-live-amber"
+                  : "border-border-subtle text-text-muted"
           }`}
           title={
-            live
-              ? "Receiving tracking packets"
-              : status?.listening
-                ? "Socket open, but no valid packets yet"
-                : "Not listening"
+            simulated
+              ? "Generated motion from the built-in simulator — NOT a real camera"
+              : live
+                ? "Receiving tracking packets from a real source"
+                : status?.listening
+                  ? "Socket open, but no valid packets yet"
+                  : "Not listening"
           }
         >
-          {live ? "Tracking" : status?.listening ? "Waiting" : "Off"}
+          {simulated ? "SIMULATED" : live ? "Tracking" : status?.listening ? "Waiting" : "Off"}
         </span>
       </div>
 
@@ -163,6 +184,33 @@ export function CameraTrackingSettings() {
             Stop
           </button>
         </div>
+
+        {/* Lets the whole chain — encode, UDP, checksum, camera filter, SSE,
+            render camera — be exercised without a physical tracker. It sends
+            real datagrams to the real listener, so a green result means the
+            path works; it cannot prove wire conformance, since it speaks this
+            app's own encoder. */}
+        <button
+          disabled={busy || !status?.listening}
+          onClick={() => void toggleSimulator(!simulated)}
+          className={`w-full rounded border px-2 py-1 font-mono text-[9px] disabled:opacity-40 ${
+            simulated
+              ? "border-live-amber text-live-amber"
+              : "border-border-subtle text-text-muted-alt hover:border-stripe-active"
+          }`}
+          title={
+            status?.listening
+              ? "Emit generated FreeD packets to the listener for bench testing"
+              : "Start the listener first"
+          }
+        >
+          {simulated ? "Stop simulated tracker" : "Simulate a tracker (no hardware)"}
+        </button>
+        {simulated && (
+          <div className="font-mono text-[9px] text-live-amber">
+            Generated motion — this is not a real camera. Stop it before going to air.
+          </div>
+        )}
 
         {(saveError || status?.error) && (
           <div className="break-all font-mono text-[9px] text-live-red">{saveError ?? status?.error}</div>
