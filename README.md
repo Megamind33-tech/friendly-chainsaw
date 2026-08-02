@@ -64,7 +64,7 @@ Program therefore cannot drift — they run the identical `renderElement` builde
 installer:
 
 1. Repo → **Actions** tab → **Windows installer** workflow
-2. **Run workflow** on `main` (or open the newest completed run)
+2. Open the newest green run — one is built for every push to `main`
 3. Download the **`broadcast-graphics-engine-windows`** artifact
 4. Unzip, run the `.exe` — the `.msi` is there too for managed deployment
 

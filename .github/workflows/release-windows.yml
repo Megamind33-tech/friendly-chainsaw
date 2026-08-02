@@ -5,15 +5,30 @@
 # machine. GitHub's windows-latest runner has all of that; the operator gets a
 # double-click installer instead.
 #
-# Trigger it by hand from the Actions tab (Run workflow) whenever you want a
-# build of the current main, or push a `v*` tag to cut a real release.
+# It runs on every push to main, so there is always a current installer waiting
+# on the newest run — nobody has to remember to kick a build before they can
+# install. Push a `v*` tag to additionally cut a tagged release, or use Run
+# workflow from the Actions tab for an ad-hoc build of another branch.
 
 name: Windows installer
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ["v*"]
+
+# A Windows runner build is ~20 minutes. If two commits land close together the
+# older installer is already obsolete, so don't pay for it twice.
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read is enough for the build; the tagged-release step needs write to create
+# the release. Repos default to read-only tokens, which would fail that step at
+# the very end of a 20-minute run.
+permissions:
+  contents: write
 
 jobs:
   build:
