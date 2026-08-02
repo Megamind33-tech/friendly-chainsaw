@@ -27,8 +27,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **S2-13** | Vendor chunks split so app updates do not re-download 2.8 MB; original diagnosis corrected | `bun run build`, measured chunk table in the audit |
 | **R5 (part)** | Coverage for binding resolution + formatting, the timeline engine, and rundown timing/export — plus a real `{value:,}` bug it exposed | `format.test.ts`, `bindings.test.ts`, `timelineEngine.test.ts`, `playout.test.ts` — 94 tests |
 | **S3-15** | README rewritten; stale audit marked superseded; `spout.rs` deferral note corrected | Reads true against the current tree |
+| **R5 (part)** | Load-path integrity — a valid project must never be rejected into an empty default | `persistence.test.ts` — 16 tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 194/194.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 210/210.
 
 ---
 
@@ -145,7 +146,8 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 3. ~~**`timelineEngine`**~~ — done.
 4. ~~**`playout.ts`** rundown timing and import/export~~ — done. The *store* (take/next/schedule ticking) is still uncovered.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.
-6. **`persistence.ts`** — document round-trip and schema up-migration; corruption here loses a show's work. **Highest remaining priority.**
+6. ~~**`persistence.ts`** round-trip and schema handling~~ — done. The remaining
+   gap there is the SQLite adapter itself, which needs a fake repository.
 7. **`connectors.ts` transports** — the pure helpers are covered; the poll/SSE/WebSocket runtime in `ConnectorRuntimeHost.tsx` is not, and needs a fake transport to test the reconnect and status paths.
 
 **Acceptance:** every S0/S1 fix stays pinned; `test:coverage` reports ≥60% on `src/document/` and `src/ar-system/`.
@@ -243,7 +245,7 @@ What remains splits cleanly into three kinds of work.
 
 | | |
 |---|---|
-| **R5** | Coverage: `persistence.ts` round-trip and schema migration is the highest-value gap left — corruption there loses a show's work. Then the playout store, then porting `automation.ts` onto Vitest. |
+| **R5** | Coverage: the playout store (take/next/schedule ticking), the connector transport runtime behind a fake transport, and porting `automation.ts` onto Vitest. |
 | **R4** | End-to-end liveness: reflect real NDI sent-frame counts, not just page liveness. |
 | **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
 | **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |
