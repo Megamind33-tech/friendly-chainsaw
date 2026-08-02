@@ -27,22 +27,29 @@ import {
  */
 
 /** What a transport reports back, so the three share one status path. */
-type Outcome =
+export type Outcome =
   | { ok: true; values: Record<string, string> }
   | { ok: false; status: ConnectorRuntime["status"]; error: string };
 
-function ingest(config: DataConnectorConfig, raw: Record<string, string>): number {
+export function ingest(config: DataConnectorConfig, raw: Record<string, string>): number {
   const mapped = applyFieldMapping(raw, config);
   const count = Object.keys(mapped).length;
   if (count > 0) mergeExternalValues(mapped);
   return count;
 }
 
-function parsePayload(text: string): Record<string, string> {
+export function parsePayload(text: string): Record<string, string> {
   return flattenJsonValues(JSON.parse(text) as unknown);
 }
 
-async function fetchOnce(config: DataConnectorConfig, signal: AbortSignal): Promise<Outcome> {
+/**
+ * One poll request, from URL construction through status classification.
+ *
+ * Exported and kept free of React so the transport's decision-making — which
+ * failure becomes which operator-facing status, and whether a credential can
+ * leak into a stored error — is testable without mounting a component.
+ */
+export async function fetchOnce(config: DataConnectorConfig, signal: AbortSignal): Promise<Outcome> {
   const { url, headers } = applyAuth(config.url, config.auth);
   let response: Response;
   try {
