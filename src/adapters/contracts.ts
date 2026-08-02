@@ -34,8 +34,3 @@ export interface BroadcastAutomation {
     method?: "add" | "navigate";
   }>;
 }
-
-/** External data adapters always normalize to the binding key/value contract. */
-export interface DataConnector {
-  fetch(): Promise<Record<string, string>>;
-}

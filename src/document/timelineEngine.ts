@@ -41,7 +41,12 @@ function applyElementAnim(el: Element, spec: AnimPhaseSpec, elapsedSec: number, 
   // on screen yet / any more. Mid-flight, `fade` decides whether it also
   // dissolves (text) or wipes in fully opaque (bars).
   const notOnScreen = phase === "in" ? raw === 0 : raw === 1;
-  const opacity = notOnScreen ? 0 : spec.fade ? el.opacity * t : el.opacity;
+  // Clamped: overshoot easings ("back.out", "elastic.out") drive `t` above 1
+  // and "back.in" drives it below 0. Canvas's `globalAlpha` setter IGNORES
+  // out-of-range values rather than clamping them, so an opacity of 1.09 left
+  // whatever alpha was set previously in force — a wrong, sticky alpha on the
+  // element instead of the intended one.
+  const opacity = notOnScreen ? 0 : clamp01(spec.fade ? el.opacity * t : el.opacity);
 
   let transform = { ...el.transform, x: el.transform.x + dx, y: el.transform.y + dy };
 
@@ -104,7 +109,9 @@ export function applyPlayback(el: Element, elapsedSec: number, timeline: Timelin
   const t = phase === "in" ? eased : 1 - eased;
   return {
     ...base,
-    opacity: base.opacity * t,
+    // Clamped for the same reason as applyElementAnim above: an overshoot
+    // ease can push this outside [0,1], which canvas silently ignores.
+    opacity: clamp01(base.opacity * t),
     transform: { ...base.transform, y: base.transform.y + SLIDE_OFFSET_Y * (1 - t) },
   };
 }
@@ -155,7 +162,9 @@ function applyPulse(el: Element, elapsedSec: number, spec: LoopPulseSpec): Eleme
     const h = transform.height * s;
     transform = { ...transform, x: cx - w / 2, y: cy - h / 2, width: w, height: h };
   }
-  const opacity = spec.opacityTo !== undefined ? el.opacity + (spec.opacityTo - el.opacity) * wave : el.opacity;
+  const opacity = clamp01(
+    spec.opacityTo !== undefined ? el.opacity + (spec.opacityTo - el.opacity) * wave : el.opacity,
+  );
   return { ...el, opacity, transform };
 }
 

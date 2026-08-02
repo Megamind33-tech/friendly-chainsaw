@@ -84,6 +84,22 @@ describe("applyPlayback — layer-wide timeline", () => {
     expect(Number.isFinite(out.transform.y)).toBe(true);
   });
 
+  it("clamps opacity for overshoot easings", () => {
+    // Regression: "back.out" drives eased progress above 1, so opacity came
+    // out at ~1.09. Canvas's globalAlpha setter IGNORES out-of-range values
+    // rather than clamping, so the element kept whatever alpha was set before
+    // — a wrong, sticky alpha instead of the intended one. Found by
+    // scripts/verify-phase3.ts, which was failing and not wired into CI.
+    const overshoot: Timeline = { ...timeline, inEase: "back.out", outEase: "back.in" };
+    for (const t of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+      for (const phase of ["in", "out"] as const) {
+        const o = applyPlayback(text(), t, overshoot, phase).opacity;
+        expect(o).toBeGreaterThanOrEqual(0);
+        expect(o).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
   it("never mutates the input element", () => {
     const el = text();
     const snapshot = JSON.parse(JSON.stringify(el));

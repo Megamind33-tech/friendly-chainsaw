@@ -10,7 +10,7 @@
 
 import { resolveElement, resolveElements } from "../src/document/bindings";
 import { applyPlayback } from "../src/document/timelineEngine";
-import { buildDataValues } from "../src/document/dataSources";
+import { buildDataValues, useDataStore } from "../src/document/dataSources";
 import type { Element, Layer, Timeline } from "../src/document/types";
 
 const tests = {
@@ -127,11 +127,27 @@ function testTimelines() {
   );
 
   // Test 2: Mid-animation (elapsed = 0.5s)
+  //
+  // The timeline above uses "back.out", which OVERSHOOTS: by the midpoint an
+  // overshoot ease has legitimately passed full opacity. The old assertion
+  // demanded `< 1` and so could only ever pass while opacity was unclamped —
+  // it was, in effect, asserting the overshoot bug (canvas globalAlpha ignores
+  // out-of-range values, leaving a stale alpha in force). The real invariant
+  // is that mid-IN is visible and in range.
   const at50 = applyPlayback(el, 0.5, timeline, "in");
   assert(
-    "Timeline: Mid IN (opacity < 1)",
-    (at50.opacity ?? 0) > 0.2 && (at50.opacity ?? 0) < 1,
+    "Timeline: Mid IN (visible and within range)",
+    (at50.opacity ?? 0) > 0.2 && (at50.opacity ?? 0) <= 1,
     `Got opacity: ${at50.opacity}`
+  );
+
+  // A non-overshoot ease must still be strictly mid-way at the midpoint.
+  const linear: Timeline = { ...timeline, inEase: "none" };
+  const linearMid = applyPlayback(el, 0.5, linear, "in");
+  assert(
+    "Timeline: Mid IN with a linear ease is strictly partial",
+    (linearMid.opacity ?? 0) > 0.2 && (linearMid.opacity ?? 0) < 1,
+    `Got opacity: ${linearMid.opacity}`
   );
 
   // Test 3: End of IN animation (elapsed = 1.0s)
@@ -163,34 +179,51 @@ function testDataSources() {
   console.log("\n=== Data Sources Tests ===\n");
 
   try {
-    const values = buildDataValues({} as any);
+    // Real store state. This used to pass `{} as any`, which threw on
+    // `state.mock.values` — so every assertion below was unreachable and the
+    // suite reported a failure nobody was watching, because these scripts are
+    // not in CI.
+    const values = buildDataValues(useDataStore.getState());
 
+    // buildDataValues returns a FLAT `source.key` map, not nested objects.
+    // The old assertions checked `"mock" in values` and
+    // `typeof values.mock === "string"`, which could never hold.
     assert(
       "Data Sources: Mock feed present",
-      "mock" in values,
-      `Available keys: ${Object.keys(values).join(", ")}`
+      Object.keys(values).some((k) => k.startsWith("mock.")),
+      `Available keys: ${Object.keys(values).slice(0, 10).join(", ")}`
     );
 
     assert(
       "Data Sources: Mock has expected fields",
-      typeof values.mock === "string" && values.mock.length > 0,
-      `Mock value: ${values.mock}`
+      typeof values["mock.headline"] === "string" && values["mock.headline"].length > 0,
+      `mock.headline: ${values["mock.headline"]}`
     );
 
-    // Check for a few common sport feeds
-    const hasAtLeastOneSport = ["soccer", "basketball", "football"].some((s) => s in values);
+    const hasAtLeastOneSport = ["soccer", "basketball", "football"].some((s) =>
+      Object.keys(values).some((k) => k.startsWith(`${s}.`))
+    );
     assert(
       "Data Sources: At least one sport feed present",
       hasAtLeastOneSport,
-      `Available feeds: ${Object.keys(values).join(", ")}`
+      `Available feeds: ${[...new Set(Object.keys(values).map((k) => k.split(".")[0]))].join(", ")}`
     );
 
-    // Check for genre feeds
-    const hasGenres = ["weather", "politics"].some((g) => g in values);
+    const hasGenres = ["weather", "politics"].some((g) =>
+      Object.keys(values).some((k) => k.startsWith(`${g}.`))
+    );
     assert(
       "Data Sources: Genre feeds present",
       hasGenres,
-      `Available feeds: ${Object.keys(values).join(", ")}`
+      `Available feeds: ${[...new Set(Object.keys(values).map((k) => k.split(".")[0]))].join(", ")}`
+    );
+
+    // The live wall-clock value is derived, never stored — it proves the flat
+    // map carries computed values as well as feed values.
+    assert(
+      "Data Sources: derived clock value present",
+      typeof values["clock.time"] === "string" && values["clock.time"].length > 0,
+      `clock.time: ${values["clock.time"]}`
     );
   } catch (e) {
     assert("Data Sources: buildDataValues callable", false, String(e));
