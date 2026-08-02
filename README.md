@@ -84,6 +84,26 @@ The installers land in `src-tauri\target\release\bundle` — an NSIS `.exe` and 
 WiX `.msi`. Run the `.exe`. Or skip the bundle and use `bun run tauri dev` to
 run straight from source.
 
+### Portable build, cross-compiled from Linux or macOS
+
+```bash
+bun run build:windows-portable
+```
+
+Produces `src-tauri/target/x86_64-pc-windows-gnu/release/broadcast-engine.exe`
+— a statically linked PE32+ whose only non-system import is
+`WebView2Loader.dll`, sitting next to it in the same directory. Copy those two
+files to a Windows machine and run the exe. No installer, no toolchain on the
+target, frontend assets embedded in the binary.
+
+One-time setup: `rustup target add x86_64-pc-windows-gnu` plus `mingw-w64`.
+
+> **This is the gnu toolchain, not MSVC.** Tauri's supported Windows target is
+> MSVC; a mingw build links clean and is a valid executable, but the
+> hand-rolled Windows FFI — NDI, WebView2 `CapturePreview` — has never been
+> *executed* from a gnu build. Treat it as a way to get running quickly, and
+> build with MSVC (above) for anything that has to be trusted on air.
+
 ### Prebuilt installer (blocked)
 
 `.github/workflows/release-windows.yml` builds the `.msi` and `.exe` on a
