@@ -62,6 +62,50 @@ pub(crate) fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     })
 }
 
+/// Whether the output sidecar is actually serving.
+///
+/// Read over Tauri IPC rather than HTTP, deliberately: when the sidecar is
+/// down, an HTTP health check is exactly the thing that cannot answer. The
+/// Control Room polls this so a dead output plane is visible in the UI instead
+/// of showing a healthy-looking window over nothing (see AUDIT-2026-08.md
+/// S2-12 — the old code panicked inside a detached task, which left the app
+/// running with no sidecar and no indication).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputServerState {
+    Starting,
+    Listening,
+    /// The port could not be claimed within the retry budget.
+    BindFailed,
+    /// It was listening and then stopped.
+    Crashed,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputServerHealth {
+    pub state: OutputServerState,
+    pub addr: &'static str,
+    /// Operator-facing explanation, including the likely cause. Empty while
+    /// healthy.
+    pub detail: String,
+}
+
+type OutputHealthState = Arc<Mutex<OutputServerHealth>>;
+
+fn set_output_health(health: &OutputHealthState, state: OutputServerState, detail: String) {
+    let mut guard = lock_recover(health);
+    guard.state = state;
+    guard.detail = detail;
+}
+
+/// Polled by the Control Room over IPC. Deliberately NOT an HTTP route: the
+/// whole point is to answer when the HTTP server cannot.
+#[tauri::command]
+fn get_output_server_health(health: tauri::State<'_, OutputHealthState>) -> OutputServerHealth {
+    lock_recover(&health).clone()
+}
+
 #[derive(Clone)]
 struct AppState {
     doc: ProgramDocState,
@@ -306,6 +350,86 @@ const CORS_HEADERS: [(axum::http::HeaderName, &str); 3] = [
     (axum::http::header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS"),
     (axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS, "content-type"),
 ];
+
+/// Is this an origin belonging to the app itself?
+///
+/// The sidecar binds 127.0.0.1, so only local processes can reach it — but
+/// "local" includes the operator's web browser. With
+/// `Access-Control-Allow-Origin: *`, any website they happen to visit could
+/// `fetch('http://127.0.0.1:4977/document')` and read the entire project:
+/// every scene, every layer, and every resolved data value currently on air.
+/// Binding to loopback stops other machines, not other tabs.
+///
+/// Everything that legitimately needs cross-origin access is the app itself:
+/// the Vite dev server, and the Tauri webview. A packaged Program window and
+/// an OBS Browser Source both load from this server directly, so they are
+/// same-origin and never send an `Origin` header at all.
+pub(crate) fn is_app_origin(origin: &str) -> bool {
+    // Tauri's own webview origins differ per platform.
+    if origin == "tauri://localhost" || origin == "http://tauri.localhost" {
+        return true;
+    }
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    // Strip the port, taking care with the bracketed IPv6 form.
+    let host = if let Some(end) = rest.strip_prefix('[').and_then(|r| r.find(']').map(|i| i + 1)) {
+        &rest[..end + 1]
+    } else {
+        rest.split(':').next().unwrap_or(rest)
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// Replaces the blanket `*` on every response with an echo of the request's
+/// origin, but only when that origin is the app's own.
+///
+/// Applied as one layer rather than edited into each handler: the handlers
+/// return `CORS_HEADERS` from a dozen places, and a single missed site is a
+/// silent hole. `Vary: Origin` is required so a cache cannot serve one
+/// origin's allowed response to another.
+async fn cors_origin_layer(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ORIGIN, VARY};
+
+    let origin = request
+        .headers()
+        .get(ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(VARY, axum::http::HeaderValue::from_static("Origin"));
+
+    match origin {
+        // A same-origin request (no Origin header) needs no CORS grant at all.
+        None => {
+            headers.remove(ACCESS_CONTROL_ALLOW_ORIGIN);
+        }
+        Some(value) if is_app_origin(&value) => {
+            match axum::http::HeaderValue::from_str(&value) {
+                Ok(header) => {
+                    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, header);
+                }
+                Err(_) => {
+                    headers.remove(ACCESS_CONTROL_ALLOW_ORIGIN);
+                }
+            }
+        }
+        // Any other origin — a website the operator happens to have open —
+        // gets no grant, so the browser blocks it from reading the response.
+        Some(_) => {
+            headers.remove(ACCESS_CONTROL_ALLOW_ORIGIN);
+        }
+    }
+    response
+}
 
 /// CORS preflight for the cross-origin POST from the Control Room webview.
 async fn asset_preflight_handler() -> impl axum::response::IntoResponse {
@@ -732,7 +856,11 @@ async fn asset_get_handler(
 /// would reject them.
 const ASSET_BODY_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
-fn spawn_output_server(state: AppState, control_state: control_server::ControlServerState) {
+fn spawn_output_server(
+    state: AppState,
+    control_state: control_server::ControlServerState,
+    health: OutputHealthState,
+) {
     tauri::async_runtime::spawn(async move {
         // The control server has its own state type; mount its routes with
         // a distinct `with_state` on a sub-router so the shared root router
@@ -768,20 +896,36 @@ fn spawn_output_server(state: AppState, control_state: control_server::ControlSe
             )
             .route("/assets/{file}", axum::routing::get(asset_get_handler))
             .with_state(state)
-            .merge(control_router);
+            .merge(control_router)
+            // Narrows the blanket `*` the handlers set down to the app's own
+            // origins. Outermost so it sees every response, including the
+            // control sub-router's.
+            .layer(axum::middleware::from_fn(cors_origin_layer));
         // Bind with retry: on a dev-watcher or crash restart the previous
         // instance can still hold the port for a few seconds; panicking here
-        // (the old behavior) silently left the app running with NO sidecar —
-        // program output, status, and assets all dead while the UI looked fine.
+        // (the original behavior) silently left the app running with NO
+        // sidecar — program output, status, and assets all dead while the UI
+        // looked fine.
+        //
+        // Exhausting the retries used to panic too, which reproduced that
+        // exact failure just 30 seconds later. Both ends now record health
+        // instead, and the Control Room renders it.
         let listener = {
             let mut attempt = 0u32;
             loop {
                 match tokio::net::TcpListener::bind(OUTPUT_SERVER_ADDR).await {
-                    Ok(listener) => break listener,
+                    Ok(listener) => break Some(listener),
                     Err(e) => {
                         attempt += 1;
                         if attempt >= 60 {
-                            panic!("output server: failed to bind {OUTPUT_SERVER_ADDR} after {attempt} attempts: {e}");
+                            let detail = format!(
+                                "Could not claim {OUTPUT_SERVER_ADDR} after {attempt} attempts ({e}). \
+                                 Another process is holding the port — most often a previous \
+                                 broadcast-engine that outlived its window. Close it and restart."
+                            );
+                            eprintln!("output server: {detail}");
+                            set_output_health(&health, OutputServerState::BindFailed, detail);
+                            break None;
                         }
                         eprintln!("output server: {OUTPUT_SERVER_ADDR} busy ({e}), retrying ({attempt})");
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -789,9 +933,15 @@ fn spawn_output_server(state: AppState, control_state: control_server::ControlSe
                 }
             }
         };
-        axum::serve(listener, router)
-            .await
-            .expect("output server crashed");
+        let Some(listener) = listener else { return };
+
+        set_output_health(&health, OutputServerState::Listening, String::new());
+
+        if let Err(e) = axum::serve(listener, router).await {
+            let detail = format!("Output server stopped: {e}. Program, status and assets are offline.");
+            eprintln!("{detail}");
+            set_output_health(&health, OutputServerState::Crashed, detail);
+        }
     });
 }
 
@@ -1138,6 +1288,11 @@ fn grant_media_permissions(window: &tauri::WebviewWindow) {
 fn grant_media_permissions(_window: &tauri::WebviewWindow) {}
 
 pub fn run() {
+    let output_health: OutputHealthState = Arc::new(Mutex::new(OutputServerHealth {
+        state: OutputServerState::Starting,
+        addr: OUTPUT_SERVER_ADDR,
+        detail: String::new(),
+    }));
     let doc_state: ProgramDocState = Arc::new(Mutex::new("null".to_string()));
     // Capacity 16: a burst of rapid Play In/Out clicks or a fast-dragged
     // Timeline scrub can outrun a slow/backgrounded receiver; `Lagged` just
@@ -1196,6 +1351,7 @@ pub fn run() {
         // if settings.enabled = true; the restart_mos_server command
         // swaps it atomically.
         .manage::<mos::MosServerState>(std::sync::Arc::new(std::sync::Mutex::new(None)))
+        .manage::<OutputHealthState>(output_health.clone())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1217,6 +1373,7 @@ pub fn run() {
             record::get_record_status,
             start_record,
             stop_record,
+            get_output_server_health,
             spout::get_spout_status,
             rundowncloud::get_rundowncloud_status,
             rundowncloud::set_rundowncloud_config,
@@ -1279,6 +1436,7 @@ pub fn run() {
                     broadcast: server_control_broadcast.clone(),
                     app_handle: app.handle().clone(),
                 },
+                output_health.clone(),
             );
             // Phase 10.1: start the MOS TCP listener if the persisted
             // settings say enabled. A bind failure or missing settings
@@ -1289,4 +1447,52 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::is_app_origin;
+
+    #[test]
+    fn accepts_the_tauri_webview_origins() {
+        assert!(is_app_origin("tauri://localhost"));
+        assert!(is_app_origin("http://tauri.localhost"));
+    }
+
+    #[test]
+    fn accepts_loopback_on_any_port() {
+        // The Vite dev port has moved before and will again; the rule is the
+        // host, not a hardcoded port.
+        assert!(is_app_origin("http://localhost:1423"));
+        assert!(is_app_origin("http://127.0.0.1:4977"));
+        assert!(is_app_origin("http://localhost"));
+        assert!(is_app_origin("https://127.0.0.1:8443"));
+        assert!(is_app_origin("http://[::1]:1423"));
+    }
+
+    #[test]
+    fn rejects_arbitrary_websites() {
+        // The whole point: a site the operator has open in another tab must
+        // not be able to read the on-air document off the loopback server.
+        assert!(!is_app_origin("https://evil.example"));
+        assert!(!is_app_origin("http://example.com:1423"));
+    }
+
+    #[test]
+    fn rejects_hosts_that_merely_contain_localhost() {
+        // Substring matching here would be a bypass: an attacker can register
+        // any of these and point them wherever they like.
+        assert!(!is_app_origin("http://localhost.evil.example"));
+        assert!(!is_app_origin("http://notlocalhost"));
+        assert!(!is_app_origin("http://127.0.0.1.evil.example"));
+        assert!(!is_app_origin("http://evil.example/?x=http://localhost"));
+    }
+
+    #[test]
+    fn rejects_malformed_or_non_http_origins() {
+        assert!(!is_app_origin(""));
+        assert!(!is_app_origin("null"));
+        assert!(!is_app_origin("file://"));
+        assert!(!is_app_origin("localhost:1423"));
+    }
 }

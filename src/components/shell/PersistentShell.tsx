@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useDocStore, useDocStoreTemporal } from "@/document/store";
 import { initPersistence } from "@/document/persistence";
 import { ConnectorRuntimeHost } from "@/document/ConnectorRuntimeHost";
+import { isOutputServerDown, useOutputServerHealth } from "@/output/useOutputServerHealth";
 import { useOutputStatus } from "@/output/useOutputStatus";
 import { initElectionFeed } from "@/ar-system/election/electionFeed";
 import { dataHub } from "@/ar-system/dataHub/dataHub";
@@ -53,6 +54,8 @@ export function PersistentShell() {
   const [dbStatus, setDbStatus] = useState<"loading" | "ok" | "error">("loading");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const status = useOutputStatus();
+  const outputHealth = useOutputServerHealth();
+  const outputDown = isOutputServerDown(outputHealth);
 
   useEffect(() => {
     initPersistence()
@@ -149,6 +152,17 @@ export function PersistentShell() {
           {ndi?.available ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
           NDI
         </div>
+        {/* An output plane that is down outranks every other indicator: with
+            no sidecar, the ON-AIR lamp below is reporting on a server that is
+            not running, so it must not be the loudest thing on screen. */}
+        {outputDown && (
+          <div
+            className="flex items-center gap-1.5 rounded border border-live-red bg-live-red/20 px-2 py-1 font-bold tracking-wide text-live-red"
+            title={outputHealth?.detail ?? "The output server is not running."}
+          >
+            OUTPUT DOWN
+          </div>
+        )}
         <div className={`flex items-center gap-1.5 rounded border px-2 py-1 font-medium tracking-wide ${LAMP_CLASS[onAirState]}`}>
           {LAMP_LABEL[onAirState]}
         </div>
