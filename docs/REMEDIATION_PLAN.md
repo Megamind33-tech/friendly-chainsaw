@@ -34,8 +34,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **R4** | `/status` reports real NDI sent-frame rate alongside — never merged into — the page-level signal | `cargo check --tests`; **live check required** |
 | **R5 (part)** | Connector transport extracted from its React effect and made injectable; SSE/WebSocket reconnect, backoff and teardown now covered | `connectorTransport.test.ts` — 20 tests |
 | **R7 (part)** | Lens calibration — measured zoom-encoder → FOV curve replaces the linear approximation | `tracking.test.ts` — 11 further tests |
+| **R5 (part)** | Playout transport — take/next/previous/stop and as-run log truthfulness | `playoutStore.test.ts` — 23 tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 284/284.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 307/307.
 
 ---
 
@@ -175,7 +176,7 @@ builds.
 1. ~~**Binding resolution + format/fallback**~~ — done; found and fixed a real `{value:,}` defect.
 2. ~~**`programState` take/cut/arm**~~ — done (R2).
 3. ~~**`timelineEngine`**~~ — done.
-4. ~~**`playout.ts`** rundown timing and import/export~~ — done. The *store* (take/next/schedule ticking) is still uncovered.
+4. ~~**`playout.ts`** rundown timing, import/export, and the transport store~~ — done.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.
 6. ~~**`persistence.ts`** round-trip and schema handling~~ — done. The remaining
    gap there is the SQLite adapter itself, which needs a fake repository.
@@ -305,6 +306,6 @@ What remains splits cleanly into three kinds of work.
 
 | | |
 |---|---|
-| **R5** | Coverage: the playout store (take/next/schedule ticking) and porting `automation.ts` onto Vitest. |
+| **R5** | Coverage: porting `automation.ts` onto Vitest for watch/coverage (it is already well covered by `verify-phase10_2`), and the React-rendering layers, which would need a component test harness. |
 | **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
 | **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |
