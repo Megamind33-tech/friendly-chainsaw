@@ -20,8 +20,13 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **S1-6** | Vitest 3.2.7 + happy-dom + config + scripts; 22 seed tests | `bunx vitest run` |
 | **S1-7** | `verify-rust-windows` CI job (`windows-latest`) + `bun run test` wired into the frontend job | YAML parses; job graph verified — first CI run is its own proof |
 | **S1-8** | Take now runs real transitions — dissolve, dip to clear, 4 softened wipes, stinger; `cut()` unchanged | `sceneTransition.test.ts` + `programState.test.ts` — 43 tests; **live check required**, see R0 |
+| **S2-14** | Deleted the dead Rust HTML renderer (`render_document_html` and friends) | `cargo check --tests` clean, no dead-code allows left |
+| **R8** | Real data connectors — multi-connector, credentials, SSE/WebSocket push, honest per-connector status | `connectors.test.ts` — 35 tests |
+| **S2-12** | Output-plane failure recorded as health state and shown as an OUTPUT DOWN banner; no panic in a detached task | `cargo check --tests`; **live check required**, see R0 |
+| **S2-16** | CORS narrowed from `*` to the app's own origins | 5 Rust origin tests incl. substring-bypass cases |
+| **S2-13** | Vendor chunks split so app updates do not re-download 2.8 MB; original diagnosis corrected | `bun run build`, measured chunk table in the audit |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 36/36 · `vitest run` 65/65.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 100/100.
 
 ---
 
@@ -109,11 +114,15 @@ Follow-ups deliberately not taken, in rough value order:
 
 ---
 
-## R3 — Output-plane failure is visible, not a silent panic · S2-12 · effort: 0.5 day
+## R3 — Output-plane failure is visible, not a silent panic · S2-12 · **DONE**
 
-After 60 failed binds (30 s) `lib.rs:900` panics inside a spawned task, reproducing the exact silent-dead-sidecar failure its own comment describes. `axum::serve(...).expect(...)` (`:910`) has the same shape.
+Bind exhaustion and serve failure both record an `OutputServerHealth` state
+instead of panicking in a detached task, and the Control Room renders an
+OUTPUT DOWN banner that outranks the ON-AIR lamp. Health is read over Tauri
+IPC, not HTTP — the point is to answer when the HTTP server cannot.
 
-**Acceptance:** bind exhaustion and serve failure both set an explicit output-offline state the Control Room renders prominently; the app does not panic in a detached task; the message names the port and the likely cause (stale process holding 4977 — a documented recurring Windows situation).
+**Still needs a live check (R0):** hold port 4977 with another process, launch,
+and confirm the banner appears with the port named in its tooltip.
 
 ---
 
@@ -135,16 +144,26 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 4. **`playout.ts`** (765 lines) — rundown timing, `next`/`previous`, schedule.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.
 6. **`persistence.ts`** — document round-trip and schema up-migration; corruption here loses a show's work.
+7. **`connectors.ts` transports** — the pure helpers are covered; the poll/SSE/WebSocket runtime in `ConnectorRuntimeHost.tsx` is not, and needs a fake transport to test the reconnect and status paths.
 
 **Acceptance:** every S0/S1 fix stays pinned; `test:coverage` reports ≥60% on `src/document/` and `src/ar-system/`.
 
 ---
 
-## R6 — Split the Program bundle from the editor bundle · S2-13 · effort: 0.5 day
+## R6 — Lazy-load the 3D stack out of the renderer · S2-13 · effort: 0.5 day + a real measurement
 
-2.81 MB (858 kB gzip) single chunk is what OBS loads for `/program` in packaged mode. Cold-start parse happens on the machine about to go to air.
+**The premise this started from was wrong.** The editor was never in the renderer's payload — `dist/renderer.html` loads `renderer-*.js` and the shared chunk and never references `control-*.js`. See the corrected S2-13 for the measured breakdown.
 
-**Acceptance:** `manualChunks` (or a separate renderer entry) keeps the program/renderer bundle to Konva + R3F/three + document model; dockview, editor chrome, recharts, cmdk and unused Radix primitives do not load on `/program`. Target < 1 MB gzip. Verify by loading `/program` and diffing network payload against the control room.
+**Done already:** explicit `manualChunks`, so vendor libraries cache independently of app code. An app update now re-downloads 699 kB instead of 2.8 MB.
+
+**The lever that remains, quantified:** `vendor-three` (952 kB) + `vendor-r3f` (625 kB) = **1.58 MB, 57% of the renderer payload**, needed only by scenes with a `set3d` layer. `DocumentRenderer` imports `Set3dRenderer` statically, so a pure-2D project pays for all of it.
+
+**Why it was not shipped blind:** lazy-loading puts a `Suspense` boundary on the Program render path. A scene taken before that chunk finishes executing shows nothing for a frame or more — a real on-air risk, traded for a gain that cannot be measured without a browser, a GPU, and cold-start timing, none of which exist in the audit container.
+
+**Acceptance:**
+1. First measure, on a real machine: time from Browser Source load to first painted frame, for a 2D-only project and a 3D project. If the difference is not material, close this and keep the static import.
+2. If it is material: `React.lazy` on `Set3dRenderer`, with an eager `import()` fired at module load so the chunk is fetched and executing in parallel rather than on first demand.
+3. A scene containing a `set3d` layer, taken immediately after the Program window opens, must still render its first frame correctly — this is the acceptance criterion that decides the whole change.
 
 ---
 
@@ -161,11 +180,25 @@ Doing neither leaves the product inviting a comparison it cannot win.
 
 ---
 
-## R8 — Feed authentication and push transport · `GAP_ANALYSIS.md` · effort: 1–2 days
+## R8 — Feed authentication and push transport · **DONE**
 
-`fetchExternalApi` is a bare `fetch(url)` — no headers, so most commercial feeds are unreachable; and polling floors latency at ≥2 s on a scorebug.
+`connectors.ts` replaces the single unauthenticated endpoint with multiple
+named connectors carrying bearer / header / query / basic credentials, over
+poll, SSE or WebSocket, with per-connector status where only `live` means a
+payload actually arrived and parsed. Legacy settings migrate on first load.
+35 tests. See the commit for the full rationale.
 
-**Acceptance:** per-source auth headers (API key / bearer), stored via the existing settings repository, never logged; optional inbound WebSocket/SSE transport reusing `mergeSourceValues` so a push payload is still one store write; connector status distinguishes *auth failed* from *unreachable* from *malformed* — and none of them read as live.
+**Follow-ups not taken:**
+
+1. **Credentials are stored in the local SQLite settings table in plaintext**,
+   like every other local setting. There is no OS keychain integration. This is
+   normal for a desktop tool and the file is user-scoped, but it should be
+   stated in the README rather than left implicit.
+2. **A field-mapping UI.** The model supports `fieldMap` per connector; the
+   panel currently exposes only the target source, so remapping individual keys
+   means editing the stored JSON.
+3. **WebSocket send.** The socket is receive-only — enough for feeds that push
+   on connect, not for ones that need a subscribe frame first.
 
 ---
 

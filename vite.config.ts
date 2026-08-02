@@ -83,6 +83,17 @@ export default defineConfig(async () => ({
         control: path.resolve(__dirname, "index.html"),
         renderer: path.resolve(__dirname, "renderer.html"),
       },
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](three|three-stdlib)[\\/]/.test(id)) return "vendor-three";
+          if (/[\\/]node_modules[\\/](@react-three|postprocessing|realism-effects|maath|meshline)/.test(id))
+            return "vendor-r3f";
+          if (/[\\/]node_modules[\\/](konva|react-konva)[\\/]/.test(id)) return "vendor-konva";
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "vendor-react";
+          return undefined;
+        },
+      },
     },
   },
 }));
