@@ -31,6 +31,7 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **R7** | FreeD camera tracking — protocol decode, UDP listener, `/tracking/stream` SSE, tracked render camera, per-set opt-in | 15 Rust + 15 TS tests; **hardware validation required** |
 | **Preview windows** | Program/Preview windows load the lean renderer entry instead of the whole editor; WebGL context budget surfaced | Built HTML verified free of `control-*.js`; 9 context tests |
 | **R5 (part)** | Connector transport — failure classification and credential scrubbing under real HTTP conditions | `connectorRuntime.test.ts` — 18 tests |
+| **R4** | `/status` reports real NDI sent-frame rate alongside — never merged into — the page-level signal | `cargo check --tests`; **live check required** |
 
 **Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 253/253.
 
@@ -132,11 +133,36 @@ and confirm the banner appears with the port named in its tooltip.
 
 ---
 
-## R4 — End-to-end liveness, not just page liveness · extends S0-1 · effort: 1 day
+## R4 — End-to-end liveness, not just page liveness · **DONE** — needs a live check
 
-The rAF heartbeat proves the Program page is presenting. It does not prove a consumer received anything.
+The rAF heartbeat (S0-1) proves the Program page is presenting. It cannot prove
+a consumer received anything.
 
-**Acceptance:** when NDI is streaming, `programState` also reflects real sent-frame counts from `ndi.rs` (`NDIlib_send_get_no_connections` is already read); when only OBS is attached, the current signal stands but is labelled as page-level in the UI. No fabricated composite number — if the two disagree, show both.
+`/status` now also reports `ndiFramesPerSecond` and `ndiFrameState`, measured
+with the same rolling-window code as the `/program` pull rate but counting
+**frames actually handed to the NDI SDK**, incremented only on a successful
+send — a frame that failed to encode or send never reached the network, and
+counting it would report frames nobody received. Both the test-pattern path and
+the Windows Program-capture path are counted.
+
+**Deliberately two numbers, not one.** They are reported and displayed
+separately rather than blended: `programState` says the page is painting,
+`ndiFrameState` says frames left the engine, and *when they disagree that is
+the most useful thing the status endpoint can say*. One averaged number would
+destroy exactly the signal worth having. The Control Room shows an `NDI n` chip
+beside the ON-AIR lamp, red when a sender is active but frames are not flowing.
+
+**Acceptance:**
+- [x] Real sent-frame counts, not fabricated.
+- [x] Page-level signal labelled as page-level in the type and the tooltip.
+- [x] The two signals shown separately, never merged.
+- [ ] **Live check:** with NDI streaming, confirm `NDI n` tracks project fps;
+      then break the capture path and confirm the chip goes red while the
+      ON-AIR lamp stays green — that divergence is the whole point.
+
+**Note:** the Program-capture counter is inside `#[cfg(windows)]` code that
+cannot be compiled here. The `windows-latest` CI job (R1) is what proves it
+builds.
 
 ---
 
@@ -275,6 +301,5 @@ What remains splits cleanly into three kinds of work.
 | | |
 |---|---|
 | **R5** | Coverage: the playout store (take/next/schedule ticking), the SSE/WebSocket reconnect paths behind fake transports, and porting `automation.ts` onto Vitest. |
-| **R4** | End-to-end liveness: reflect real NDI sent-frame counts, not just page liveness. |
 | **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
 | **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |

@@ -21,6 +21,7 @@ pub fn trigger_program_capture(
     ndi: Arc<dyn NdiOutput>,
     fps: (u32, u32),
     in_flight: Arc<AtomicBool>,
+    frames: Arc<std::sync::Mutex<crate::status::RequestStats>>,
 ) {
     use webview2_com::CapturePreviewCompletedHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG;
@@ -70,9 +71,15 @@ pub fn trigger_program_capture(
                     Ok(bytes) => {
                         let ndi_worker = ndi.clone();
                         let in_flight_worker = in_flight_cb.clone();
+                        let frames_worker = frames.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) = decode_convert_send(&bytes, &ndi_worker, fps) {
-                                eprintln!("ndi capture: {e}");
+                            // Counted only on success — a frame that failed to
+                            // decode or send never reached the network, and
+                            // counting it would make /status report frames
+                            // nobody received.
+                            match decode_convert_send(&bytes, &ndi_worker, fps) {
+                                Ok(()) => crate::lock_recover(&frames_worker).record_hit(),
+                                Err(e) => eprintln!("ndi capture: {e}"),
                             }
                             in_flight_worker.store(false, Ordering::Relaxed);
                         });
@@ -157,6 +164,7 @@ pub fn trigger_program_capture(
     _ndi: Arc<dyn NdiOutput>,
     _fps: (u32, u32),
     in_flight: Arc<AtomicBool>,
+    _frames: Arc<std::sync::Mutex<crate::status::RequestStats>>,
 ) {
     // Program capture is WebView2-specific; nothing to do off-Windows.
     in_flight.store(false, Ordering::Relaxed);

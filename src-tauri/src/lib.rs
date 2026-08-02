@@ -123,6 +123,11 @@ struct AppState {
     frontend_roots: Vec<PathBuf>,
     /// Live FreeD camera poses, forwarded to `/tracking/stream`.
     tracking_broadcast: freed::FreedBroadcast,
+    /// Real NDI frames handed to the SDK, measured with the same rolling-window
+    /// code as the `/program` pull rate. This is end-to-end evidence in a way
+    /// the page heartbeat is not: it counts frames that actually left the
+    /// engine, not requests a page made (see AUDIT-2026-08.md S0-1, R4).
+    ndi_frames: Arc<Mutex<status::RequestStats>>,
 }
 
 /// A parsed `/document` envelope. Only `project` is read now that `/program`
@@ -330,6 +335,7 @@ async fn status_handler(axum::extract::State(state): axum::extract::State<AppSta
         .filter(|f| *f > 0.0)
         .unwrap_or(30.0);
     let snapshot = lock_recover(&state.stats).snapshot(expected_fps);
+    let ndi_frames = lock_recover(&state.ndi_frames).snapshot(expected_fps);
     let ndi_status = state.ndi.status();
     let body = serde_json::json!({
         "programState": snapshot.program_state,
@@ -337,6 +343,13 @@ async fn status_handler(axum::extract::State(state): axum::extract::State<AppSta
         "expectedFps": snapshot.expected_fps,
         "healthPct": snapshot.health_pct,
         "missedPullsProxy": snapshot.missed_pulls_proxy,
+        // End-to-end evidence, kept SEPARATE from the page-level signal above
+        // rather than blended into it. `programState` says the Program page is
+        // painting; this says frames actually left the engine. When the two
+        // disagree that is information, and averaging them into one number
+        // would destroy it (AUDIT-2026-08.md R4).
+        "ndiFramesPerSecond": ndi_frames.requests_per_second,
+        "ndiFrameState": ndi_frames.program_state,
         "ndi": ndi_status,
     });
     (
@@ -1170,6 +1183,7 @@ fn spawn_ndi_sender(
     streaming: Arc<std::sync::atomic::AtomicBool>,
     config: NdiConfigState,
     program_window: Option<tauri::WebviewWindow>,
+    frames: Arc<Mutex<status::RequestStats>>,
 ) {
     use std::sync::atomic::Ordering;
     let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1192,8 +1206,12 @@ fn spawn_ndi_sender(
                     let buf = tokio::task::spawn_blocking(move || generate_test_pattern(w, h, frame_i))
                         .await
                         .unwrap_or_default();
-                    if let Err(e) = ndi.send_frame(&buf, w, h, cfg.fps_n, cfg.fps_d) {
-                        eprintln!("ndi test pattern: send_frame failed: {e}");
+                    match ndi.send_frame(&buf, w, h, cfg.fps_n, cfg.fps_d) {
+                        // Counted only on success: a failed send did not reach
+                        // the network, and counting it would make the rate
+                        // report frames nobody received.
+                        Ok(()) => lock_recover(&frames).record_hit(),
+                        Err(e) => eprintln!("ndi test pattern: send_frame failed: {e}"),
                     }
                     frame_i = frame_i.wrapping_add(4);
                 }
@@ -1220,7 +1238,13 @@ fn spawn_ndi_sender(
                     if let Ok(mut t) = last_trigger.lock() {
                         *t = std::time::Instant::now();
                     }
-                    capture::trigger_program_capture(win, ndi.clone(), (cfg.fps_n, cfg.fps_d), in_flight.clone());
+                    capture::trigger_program_capture(
+                        win,
+                        ndi.clone(),
+                        (cfg.fps_n, cfg.fps_d),
+                        in_flight.clone(),
+                        frames.clone(),
+                    );
                 }
             }
         }
@@ -1320,6 +1344,7 @@ fn grant_media_permissions(window: &tauri::WebviewWindow) {
 fn grant_media_permissions(_window: &tauri::WebviewWindow) {}
 
 pub fn run() {
+    let ndi_frame_stats: Arc<Mutex<status::RequestStats>> = Arc::new(Mutex::new(status::RequestStats::new()));
     let freed_state: freed::SharedFreedState = Arc::new(Mutex::new(freed::FreedState::default()));
     // 256 poses of slack: a tracker runs at frame rate, so a client that
     // stalls briefly resumes on the current pose instead of dropping the feed.
@@ -1463,6 +1488,7 @@ pub fn run() {
                 sender_streaming.clone(),
                 sender_config.clone(),
                 app.get_webview_window("program"),
+                ndi_frame_stats.clone(),
             );
             spawn_output_server(
                 AppState {
@@ -1473,6 +1499,7 @@ pub fn run() {
                     assets_dir: assets_dir.clone(),
                     frontend_roots,
                     tracking_broadcast: freed_broadcast.clone(),
+                    ndi_frames: ndi_frame_stats.clone(),
                 },
                 control_server::ControlServerState {
                     state: server_control_state.clone(),

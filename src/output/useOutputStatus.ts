@@ -12,6 +12,11 @@ export interface NdiStatus {
 }
 
 export interface OutputStatus {
+  /**
+   * Whether the Program PAGE is alive and presenting frames — derived from the
+   * rAF heartbeat (see AUDIT-2026-08.md S0-1). It does NOT mean a downstream
+   * consumer received anything; for that, read `ndiFrameState`.
+   */
   programState: ProgramLivenessState;
   requestsPerSecond: number;
   expectedFps: number;
@@ -20,6 +25,19 @@ export interface OutputStatus {
    * window. NOT a count of dropped video frames — there is no real video
    * pipeline yet (that lands in Phase 8). */
   missedPullsProxy: number;
+  /**
+   * Frames per second actually handed to the NDI SDK — end-to-end evidence,
+   * counted only on a successful send. Zero while NDI is not streaming.
+   */
+  ndiFramesPerSecond?: number;
+  /**
+   * The same liveness classification applied to real sent frames rather than
+   * page paints. Deliberately reported alongside `programState` rather than
+   * blended into it: when the two disagree that is the most useful thing the
+   * status endpoint can tell an operator, and one averaged number would
+   * destroy it.
+   */
+  ndiFrameState?: ProgramLivenessState;
   ndi: NdiStatus;
 }
 

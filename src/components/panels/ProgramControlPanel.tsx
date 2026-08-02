@@ -66,17 +66,51 @@ const LAMP_CLASS: Record<string, string> = {
 
 /** Real ON-AIR lamp — driven solely by /status (actual /program request
  * flow), never by programSceneId. Cutting to a new scene does not turn
- * this on; only a consumer actually pulling /program does. */
+ * this on; only a consumer actually pulling /program does.
+ *
+ * Two signals, deliberately shown separately rather than merged:
+ *
+ *   * `programState` — the Program PAGE is alive and presenting frames.
+ *   * `ndiFrameState` — frames actually left the engine to NDI.
+ *
+ * The first cannot see a downstream failure and the second only exists while
+ * NDI is streaming. When they disagree that is exactly the information an
+ * operator needs, so blending them into one lamp would destroy it. */
 function OnAirLamp() {
   const status = useOutputStatus();
   const state = status?.programState ?? "no_consumer";
+  const ndiFps = status?.ndiFramesPerSecond ?? 0;
+  const ndiStreaming = ndiFps > 0;
+  // `connections` is non-null only once a sender has actually been started
+  // (see ndi.rs) — that is the honest "NDI is meant to be sending" signal.
+  // Page painting but nothing reaching the SDK is a failure the page-level
+  // lamp structurally cannot see.
+  const ndiSenderActive = status?.ndi?.connections !== null && status?.ndi?.connections !== undefined;
+  const ndiStalled = ndiSenderActive && status?.ndiFrameState !== "live";
 
   return (
-    <div
-      className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] font-medium tracking-wide ${LAMP_CLASS[state]}`}
-    >
-      <Radio className="h-3 w-3" />
-      {LAMP_LABEL[state]}
+    <div className="flex items-center gap-1.5">
+      <div
+        className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[10px] font-medium tracking-wide ${LAMP_CLASS[state]}`}
+        title="Program page liveness — measured from real frame presentation, not a timer. Does not prove a consumer received anything."
+      >
+        <Radio className="h-3 w-3" />
+        {LAMP_LABEL[state]}
+      </div>
+      {(ndiStreaming || ndiStalled) && (
+        <div
+          className={`rounded border px-1.5 py-1 font-mono text-[9px] tracking-wide ${
+            ndiStalled ? "border-live-red text-live-red" : "border-accent-blue text-accent-blue-bright"
+          }`}
+          title={
+            ndiStalled
+              ? "NDI is streaming but frames are not reaching the SDK — the Program lamp cannot see this."
+              : "Frames per second actually sent to NDI, counted only on a successful send."
+          }
+        >
+          NDI {ndiFps.toFixed(0)}
+        </div>
+      )}
     </div>
   );
 }
