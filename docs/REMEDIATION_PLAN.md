@@ -35,8 +35,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **R5 (part)** | Connector transport extracted from its React effect and made injectable; SSE/WebSocket reconnect, backoff and teardown now covered | `connectorTransport.test.ts` — 20 tests |
 | **R7 (part)** | Lens calibration — measured zoom-encoder → FOV curve replaces the linear approximation | `tracking.test.ts` — 11 further tests |
 | **R5 (part)** | Playout transport — take/next/previous/stop and as-run log truthfulness | `playoutStore.test.ts` — 23 tests |
+| **R5 (part)** | Automation consolidated out of three phase scripts into one Vitest suite (strict superset) | `automation.test.ts` — 57 tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 307/307.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 364/364.
 
 ---
 
@@ -306,6 +307,6 @@ What remains splits cleanly into three kinds of work.
 
 | | |
 |---|---|
-| **R5** | Coverage: porting `automation.ts` onto Vitest for watch/coverage (it is already well covered by `verify-phase10_2`), and the React-rendering layers, which would need a component test harness. |
+| **R5** | Coverage: only the React-rendering layers remain, and they would need a component test harness. Every pure module that decides what reaches air is now covered. |
 | **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
 | **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |

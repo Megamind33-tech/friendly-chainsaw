@@ -1,13 +1,16 @@
 /**
- * Phase 10.1 verification — MOS Stage 2 + automation composability.
+ * Phase 10.1 verification — MOS Stage 2 rundown mutation.
  *
  * MOS TCP listener + XML parsing are covered by cargo test (9 mos tests
  * against real MOS 2.8.5 XML samples). This TS suite pins:
+ *   * MOS story → ProgramItem mapping
  *   * Rundown mutation ops (apply MOS Delete/Insert/Move/Send to items)
- *   * Automation multi-action rule shape + validation
- *   * Rule v1 → v2 migration on load
- *   * on_mos_message trigger + roleFilter matching
- *   * Multi-action rate accounting (each action counts separately)
+ *
+ * The automation half of this suite (multi-action validation, v1→v2
+ * migration, the on_mos_message trigger, multi-action rate accounting) moved
+ * to `src/document/automation.test.ts`, which consolidates every automation
+ * assertion that was previously spread across phase 10, 10.1 and 10.2 into
+ * one place with watch mode and coverage. Nothing was dropped in the move.
  *
  * Run with: `bun run scripts/verify-phase10_1.ts`
  */
@@ -22,15 +25,6 @@ import {
   type MosStoryLike,
   type ProgramItem,
 } from "../src/document/playout";
-import {
-  migrateRule,
-  validateRule,
-  rateLimit,
-  AUTOMATION_TRIGGER_KINDS,
-  AUTOMATION_CONDITION_FIELDS,
-  RATE_LIMIT_MAX_ACTIONS,
-  type AutomationRule,
-} from "../src/document/automation";
 
 type Failure = { name: string; err: unknown };
 const failures: Failure[] = [];
@@ -176,135 +170,6 @@ test("applyMosStorySend adds new item when id not present", () => {
   const after = applyMosStorySend(items, { id: "NEW", slug: "new one", durationSec: 20 });
   assertEq(after.length, 4, "grew by 1");
   assertEq(after[3].title, "new one", "new item at end");
-});
-
-// ---------------------------------------------------------------------------
-console.log("\nMulti-action rule validation");
-
-const okRule: AutomationRule = {
-  id: "r1",
-  name: "test",
-  enabled: true,
-  trigger: { kind: "on_take" },
-  actions: [{ type: "take" }],
-};
-
-test("single-action rule accepted", () => {
-  validateRule(okRule);
-});
-
-test("multi-action rule accepted", () => {
-  validateRule({ ...okRule, actions: [{ type: "take" }, { type: "startRecord" }, { type: "playIn" }] });
-});
-
-test("empty actions array rejected", () => {
-  assertThrows(() => validateRule({ ...okRule, actions: [] }), "at least one action");
-});
-
-test("action array with an unknown type rejected", () => {
-  assertThrows(
-    () =>
-      validateRule({
-        ...okRule,
-        actions: [{ type: "take" }, { type: "bogus" as never }],
-      }),
-    "unknown action type",
-  );
-});
-
-test("on_mos_message trigger accepted", () => {
-  validateRule({
-    ...okRule,
-    trigger: { kind: "on_mos_message", roleFilter: "roCreate" },
-  });
-});
-
-test("on_mos_message trigger without roleFilter accepted", () => {
-  validateRule({
-    ...okRule,
-    trigger: { kind: "on_mos_message" },
-  });
-});
-
-test("AUTOMATION_TRIGGER_KINDS includes on_mos_message", () => {
-  assert(AUTOMATION_TRIGGER_KINDS.includes("on_mos_message"), "trigger kind registered");
-});
-
-test("condition field mosRole in whitelist", () => {
-  assert(AUTOMATION_CONDITION_FIELDS.includes("mosRole"), "mosRole whitelisted");
-  assert(AUTOMATION_CONDITION_FIELDS.includes("mosRoId"), "mosRoId whitelisted");
-});
-
-// ---------------------------------------------------------------------------
-console.log("\nv1 → v2 migration");
-
-test("v1 rule with 'action' single field migrates to 'actions' array", () => {
-  const v1 = {
-    id: "old",
-    name: "legacy",
-    enabled: true,
-    trigger: { kind: "on_take" },
-    action: { type: "take" },
-  };
-  const migrated = migrateRule(v1);
-  assert(migrated !== null, "migrated to a valid rule");
-  assertEq(migrated!.actions, [{ type: "take" }], "single-element actions array");
-});
-
-test("v2 rule with 'actions' array preserved", () => {
-  const v2 = {
-    id: "new",
-    name: "already migrated",
-    enabled: false,
-    trigger: { kind: "on_timer", seconds: 10 },
-    actions: [{ type: "next_item" }, { type: "take" }],
-  };
-  const migrated = migrateRule(v2);
-  assertEq(migrated?.actions.length, 2, "preserved multi-action");
-});
-
-test("rule with no action and no actions is dropped (null)", () => {
-  const orphan = { id: "x", name: "y", enabled: true, trigger: { kind: "on_take" } };
-  const migrated = migrateRule(orphan);
-  // The rule loads with empty actions; loadPersisted filters those out.
-  // Direct migrateRule call returns the rule; we verify empty actions.
-  assertEq(migrated?.actions.length, 0, "empty actions signals drop");
-});
-
-test("non-object input yields null", () => {
-  assertEq(migrateRule(null), null, "null in, null out");
-  assertEq(migrateRule("string" as unknown), null, "string in, null out");
-});
-
-// ---------------------------------------------------------------------------
-console.log("\nMulti-action rate limit accounting");
-
-test("3-action rule counts as 3 against the cap", () => {
-  // Simulate firing a 3-action rule three times — that's 9 dispatches,
-  // all should pass; a fourth firing would be 12 total and the last
-  // two should block.
-  let ts: number[] = [];
-  for (let fire = 0; fire < 3; fire++) {
-    for (let a = 0; a < 3; a++) {
-      const r = rateLimit(ts, 1000 + fire * 10 + a);
-      assert(r.allowed, `fire ${fire + 1} action ${a + 1} allowed`);
-      ts = r.pruned;
-    }
-  }
-  assertEq(ts.length, 9, "9 timestamps recorded");
-
-  // Fourth firing: first action pushes to 10 (allowed), second to 11 (blocked).
-  const a1 = rateLimit(ts, 1050);
-  assert(a1.allowed, "10th action allowed");
-  ts = a1.pruned;
-  const a2 = rateLimit(ts, 1051);
-  assert(!a2.allowed, "11th action blocked");
-});
-
-test("cap is exactly RATE_LIMIT_MAX_ACTIONS", () => {
-  // Sanity: the constant hasn't changed. This is a compat guard — a
-  // Phase 10.1 rule that ships with 10 actions expects the cap here.
-  assertEq(RATE_LIMIT_MAX_ACTIONS, 10, "10 actions per second");
 });
 
 // ---------------------------------------------------------------------------
