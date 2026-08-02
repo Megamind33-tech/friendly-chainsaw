@@ -13,6 +13,7 @@
     "tauri": "tauri",
     "check:windows": "cd src-tauri && cargo check --target x86_64-pc-windows-gnu",
     "build:windows-portable": "bun run build && cd src-tauri && cargo build --release --target x86_64-pc-windows-gnu",
+    "build:windows-installer": "tauri build --target x86_64-pc-windows-gnu --bundles nsis",
     "doctor": "node scripts/doctor.mjs",
     "bootstrap:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-windows.ps1",
     "test": "vitest run",

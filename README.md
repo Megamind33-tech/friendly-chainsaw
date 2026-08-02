@@ -84,19 +84,32 @@ The installers land in `src-tauri\target\release\bundle` — an NSIS `.exe` and 
 WiX `.msi`. Run the `.exe`. Or skip the bundle and use `bun run tauri dev` to
 run straight from source.
 
-### Portable build, cross-compiled from Linux or macOS
+### Cross-build from Linux or macOS
+
+You do not need a Windows machine to produce a Windows build.
 
 ```bash
-bun run build:windows-portable
+bun run build:windows-installer   # NSIS .exe installer
+bun run build:windows-portable    # bare .exe, no installer
 ```
 
-Produces `src-tauri/target/x86_64-pc-windows-gnu/release/broadcast-engine.exe`
-— a statically linked PE32+ whose only non-system import is
-`WebView2Loader.dll`, sitting next to it in the same directory. Copy those two
-files to a Windows machine and run the exe. No installer, no toolchain on the
-target, frontend assets embedded in the binary.
+`build:windows-installer` writes
+`src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/Broadcast Graphics Engine_<version>_x64-setup.exe`
+— a real Nullsoft installer, ~14 MB, that installs per-machine with Start-menu
+and uninstall entries.
 
-One-time setup: `rustup target add x86_64-pc-windows-gnu` plus `mingw-w64`.
+`build:windows-portable` skips the bundler and leaves
+`.../release/broadcast-engine.exe`: a statically linked PE32+ whose only
+non-system import is `WebView2Loader.dll`, dropped beside it. Copy those two
+files anywhere and run the exe. No mingw runtime DLLs, frontend assets embedded
+in the binary.
+
+One-time setup: `rustup target add x86_64-pc-windows-gnu`, plus `mingw-w64` and
+— for the installer — `nsis`:
+
+```bash
+sudo apt-get install -y mingw-w64 nsis
+```
 
 > **This is the gnu toolchain, not MSVC.** Tauri's supported Windows target is
 > MSVC; a mingw build links clean and is a valid executable, but the
@@ -111,10 +124,11 @@ GitHub `windows-latest` runner and uploads them as an artifact, so installing
 would need no toolchain at all: Actions tab → **Windows installer** → newest
 run → download **`broadcast-graphics-engine-windows`**.
 
-**This does not work yet** — Actions cannot provision a runner on this
-repository (see the CI note under [Testing](#testing)). The workflow is correct
-and will produce installers the moment that setting is fixed; until then, build
-locally.
+**This does not work yet** — Actions cannot provision a runner for this account
+(see the CI note under [Testing](#testing)). The workflow is correct and will
+produce installers the moment that clears; until then, cross-build above or
+build locally. Its remaining advantage over cross-building is that it is an
+MSVC build on a real Windows host, which is the supported configuration.
 
 > Builds are **unsigned** — no code-signing certificate is configured — so
 > SmartScreen warns on first run. Choose *More info* → *Run anyway*. The
