@@ -3,7 +3,6 @@ import { flattenJsonValues, mergeExternalValues } from "./externalConnector";
 import {
   applyAuth,
   applyFieldMapping,
-  backoffMs,
   isStale,
   redactError,
   statusForHttpCode,
@@ -11,6 +10,12 @@ import {
   type ConnectorRuntime,
   type DataConnectorConfig,
 } from "./connectors";
+import {
+  startConnectorTransport,
+  type EventSourceLike,
+  type TransportDeps,
+  type WebSocketLike,
+} from "./connectorTransport";
 
 /**
  * Drives every enabled connector.
@@ -82,12 +87,25 @@ export async function fetchOnce(config: DataConnectorConfig, signal: AbortSignal
   }
 }
 
+/** Real browser primitives. The transport takes these as parameters so tests
+ * can drive reconnect sequences without real sockets or real clocks. */
+const BROWSER_DEPS: TransportDeps = {
+  fetchOnce,
+  ingest,
+  parsePayload,
+  createEventSource: (url) => new EventSource(url) as unknown as EventSourceLike,
+  createWebSocket: (url) => new WebSocket(url) as unknown as WebSocketLike,
+  setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+};
+
 function useOneConnector(config: DataConnectorConfig): void {
   const setRuntime = useConnectorStore((s) => s.setRuntime);
 
   // Only connection-defining fields are dependencies. `name`, `fieldMap` and
-  // `targetSource` are read through a ref-like closure over `config` on each
-  // delivery instead, so retitling a connector never drops its socket.
+  // `targetSource` are read through the closure over `config` on each delivery
+  // instead, so retitling a connector never drops its socket.
   const { id, enabled, transport, url, pollIntervalSec } = config;
   const authKey = JSON.stringify(config.auth);
 
@@ -96,117 +114,12 @@ function useOneConnector(config: DataConnectorConfig): void {
       setRuntime(id, { status: enabled ? "idle" : "disabled", lastError: null });
       return;
     }
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let source: EventSource | null = null;
-    let socket: WebSocket | null = null;
-    const controller = new AbortController();
-    let failures = 0;
-
-    const succeed = (count: number) => {
-      failures = 0;
-      setRuntime(id, {
-        status: "live",
-        lastSyncAt: Date.now(),
-        lastError: null,
-        failureCount: 0,
-        lastKeyCount: count,
-      });
-    };
-
-    const fail = (status: ConnectorRuntime["status"], error: string) => {
-      failures += 1;
-      // lastSyncAt is deliberately left alone: it records the last time real
-      // data arrived, which is what an operator needs during an outage.
-      setRuntime(id, { status, lastError: error, failureCount: failures });
-    };
-
-    const deliver = (text: string) => {
-      if (cancelled) return;
-      try {
-        succeed(ingest(config, parsePayload(text)));
-      } catch (err) {
-        fail("malformed", redactError(err instanceof Error ? err.message : String(err), config.auth));
-      }
-    };
-
-    // ---- poll -----------------------------------------------------------
-    const poll = async () => {
-      if (cancelled) return;
-      const outcome = await fetchOnce(config, controller.signal);
-      if (cancelled) return;
-      if (outcome.ok) succeed(ingest(config, outcome.values));
-      else fail(outcome.status, outcome.error);
-      // Back off after failures instead of hammering a dead endpoint at the
-      // configured rate, but never slower than the cap so recovery is quick.
-      const delay = failures > 0 ? Math.max(pollIntervalSec * 1000, backoffMs(failures)) : pollIntervalSec * 1000;
-      timer = setTimeout(() => void poll(), delay);
-    };
-
-    // ---- SSE ------------------------------------------------------------
-    const openSse = () => {
-      if (cancelled) return;
-      setRuntime(id, { status: "connecting" });
-      // EventSource cannot send headers, so header/bearer auth is not
-      // expressible on this transport — `applyAuth` still folds `query` auth
-      // into the URL, which is how SSE endpoints normally authenticate.
-      const { url: authedUrl } = applyAuth(url, config.auth);
-      source = new EventSource(authedUrl);
-      source.onmessage = (event) => deliver(event.data);
-      source.onerror = () => {
-        if (cancelled) return;
-        // EventSource reconnects itself, but it cannot tell us why it failed,
-        // so this is reported as unreachable rather than guessing auth.
-        fail("unreachable", "SSE connection lost");
-      };
-    };
-
-    // ---- WebSocket ------------------------------------------------------
-    const openSocket = () => {
-      if (cancelled) return;
-      setRuntime(id, { status: "connecting" });
-      const { url: authedUrl } = applyAuth(url, config.auth);
-      try {
-        socket = new WebSocket(authedUrl);
-      } catch (err) {
-        fail("unreachable", redactError(err instanceof Error ? err.message : String(err), config.auth));
-        timer = setTimeout(openSocket, backoffMs(failures));
-        return;
-      }
-      socket.onmessage = (event) => deliver(typeof event.data === "string" ? event.data : "");
-      socket.onerror = () => {
-        if (!cancelled) fail("unreachable", "WebSocket error");
-      };
-      socket.onclose = (event) => {
-        if (cancelled) return;
-        // 1000/1005 are clean closes; anything else is a fault worth showing.
-        if (event.code !== 1000 && event.code !== 1005) {
-          // 1008 (policy violation) is what servers send for a rejected token.
-          fail(event.code === 1008 ? "auth-failed" : "unreachable", `WebSocket closed (${event.code})`);
-        } else {
-          failures += 1;
-        }
-        timer = setTimeout(openSocket, backoffMs(failures));
-      };
-    };
-
-    if (transport === "poll") void poll();
-    else if (transport === "sse") openSse();
-    else openSocket();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      if (timer) clearTimeout(timer);
-      source?.close();
-      // 1000 = normal closure, so the server sees an intentional disconnect
-      // rather than logging a dropped client every time a setting changes.
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.close(1000);
-      }
-    };
-    // `config` itself is intentionally not a dependency — see the comment above.
+    return startConnectorTransport(
+      config,
+      { setStatus: (patch) => setRuntime(id, patch) },
+      BROWSER_DEPS,
+    );
+    // `config` is intentionally not a dependency — see the comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, enabled, transport, url, pollIntervalSec, authKey, setRuntime]);
 }

@@ -32,8 +32,9 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **Preview windows** | Program/Preview windows load the lean renderer entry instead of the whole editor; WebGL context budget surfaced | Built HTML verified free of `control-*.js`; 9 context tests |
 | **R5 (part)** | Connector transport — failure classification and credential scrubbing under real HTTP conditions | `connectorRuntime.test.ts` — 18 tests |
 | **R4** | `/status` reports real NDI sent-frame rate alongside — never merged into — the page-level signal | `cargo check --tests`; **live check required** |
+| **R5 (part)** | Connector transport extracted from its React effect and made injectable; SSE/WebSocket reconnect, backoff and teardown now covered | `connectorTransport.test.ts` — 20 tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 253/253.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 273/273.
 
 ---
 
@@ -177,7 +178,7 @@ builds.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.
 6. ~~**`persistence.ts`** round-trip and schema handling~~ — done. The remaining
    gap there is the SQLite adapter itself, which needs a fake repository.
-7. ~~**Connector transports**~~ — the poll path (status classification, credential scrubbing) is covered against a mocked `fetch`. The **SSE and WebSocket reconnect paths are still untested**: they need a fake `EventSource`/`WebSocket` to exercise backoff and close-code handling.
+7. ~~**Connector transports**~~ — done. The lifecycle was extracted out of its React effect into `connectorTransport.ts` with injectable network primitives, which is what made the reconnect sequences reachable at all.
 
 **Acceptance:** every S0/S1 fix stays pinned; `test:coverage` reports ≥60% on `src/document/` and `src/ar-system/`.
 
@@ -300,6 +301,6 @@ What remains splits cleanly into three kinds of work.
 
 | | |
 |---|---|
-| **R5** | Coverage: the playout store (take/next/schedule ticking), the SSE/WebSocket reconnect paths behind fake transports, and porting `automation.ts` onto Vitest. |
+| **R5** | Coverage: the playout store (take/next/schedule ticking) and porting `automation.ts` onto Vitest. |
 | **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
 | **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |
