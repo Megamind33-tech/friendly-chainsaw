@@ -28,8 +28,10 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **R5 (part)** | Coverage for binding resolution + formatting, the timeline engine, and rundown timing/export — plus a real `{value:,}` bug it exposed | `format.test.ts`, `bindings.test.ts`, `timelineEngine.test.ts`, `playout.test.ts` — 94 tests |
 | **S3-15** | README rewritten; stale audit marked superseded; `spout.rs` deferral note corrected | Reads true against the current tree |
 | **R5 (part)** | Load-path integrity — a valid project must never be rejected into an empty default | `persistence.test.ts` — 16 tests |
+| **R7** | FreeD camera tracking — protocol decode, UDP listener, `/tracking/stream` SSE, tracked render camera, per-set opt-in | 15 Rust + 15 TS tests; **hardware validation required** |
+| **Preview windows** | Program/Preview windows load the lean renderer entry instead of the whole editor; WebGL context budget surfaced | Built HTML verified free of `control-*.js`; 9 context tests |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 210/210.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 56/56 · `vitest run` 235/235.
 
 ---
 
@@ -171,16 +173,42 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 
 ---
 
-## R7 — Resolve the AR positioning gap · `GAP_ANALYSIS.md` · effort: 3 days *or* 1 hour
+## R7 — Resolve the AR positioning gap · **DONE (option a)** — needs hardware validation
 
-The product claims AR; broadcast AR means camera-tracked graphics, and there is no tracking ingest anywhere. **Pick one:**
+Option (a) was taken: the claim was made true rather than withdrawn.
 
-**(a) Make the claim true — FreeD ingest.** UDP listener in `src-tauri/`, parse FreeD D1 packets (pan/tilt/roll/x/y/z/zoom/focus), drive the R3F camera each frame, apply a lens distortion model. FreeD is small and well documented; this is a genuine Tier-3-adjacent differentiator and the highest-leverage feature available to this product.
-**Acceptance:** a recorded FreeD stream drives the Program camera frame-accurately; a static object stays locked to its world position as the camera moves.
+`freed.rs` decodes the FreeD D1 datagram, a UDP listener feeds poses onto the
+sidecar's `/tracking/stream` (SSE, matching `/document/stream`, because the OBS
+Browser Source has no Tauri IPC), and `TrackedCameraRig` locks the render camera
+to the tracked pose. Enabled per virtual-set layer so a scene can hold a tracked
+AR set and an untracked backplate at once. 15 Rust tests + 15 TS tests.
 
-**(b) Rename.** "3D virtual set graphics" everywhere AR is claimed as a tracked-camera capability. One hour.
+**Acceptance, as written before implementation:**
 
-Doing neither leaves the product inviting a comparison it cannot win.
+- [x] A FreeD stream drives the Program camera.
+- [x] Unit-tested decode: round-trip, sign extension across the full angle
+      range, mm→m conversion, checksum, and rejection of short/long/mistyped/
+      corrupted datagrams.
+- [x] Camera-id filtering that does not inflate the error counter.
+- [x] Euler order pinned (YXZ) — a pan/tilt head's tilt axis rides on its pan
+      axis, and this is the classic place a tracking integration goes subtly
+      wrong and the graphic swims.
+- [ ] **A static object stays locked to its world position as the camera moves.**
+      This needs a real tracker and cannot be closed from a container.
+
+**Blocking follow-ups before this is trusted on air:**
+
+1. **Validate against real hardware.** The decoder is tested against its own
+   builder, which proves internal consistency and cannot prove wire conformance.
+   Point a real Mo-Sys/Stype/Ncam feed at it and watch the Settings panel: a
+   rising *accepted* count means the format matches, a rising *rejected* count
+   means it does not. Verify the axis convention visually — a graphic placed on
+   the studio floor must stay on the floor through a full pan and tilt.
+2. **Lens calibration.** Zoom/focus arrive as raw encoder counts; what ships is
+   a linear encoder→FOV map, labelled as such. Real lenses need a calibration
+   table or graphics drift in scale through a zoom.
+3. **Lens distortion.** Graphics render to an ideal pinhole camera, so they will
+   not match a wide lens's barrel distortion at frame edges.
 
 ---
 
@@ -239,7 +267,7 @@ What remains splits cleanly into three kinds of work.
 
 | | |
 |---|---|
-| **R7** | Add FreeD camera-tracking ingest, or stop calling it AR. Currently the product invites a comparison it cannot win. One is three days, the other is an hour. |
+| **R7** | Validate the shipped FreeD ingest against a real tracker, then decide whether lens calibration is worth building. The protocol work is done; only hardware can close it. |
 
 ### Ordinary remaining engineering
 

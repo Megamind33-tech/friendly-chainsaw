@@ -426,6 +426,7 @@ export function SetNodeInspector({
   const updateSetNode = useDocStore((s) => s.updateSetNode);
   const commitNodeTransform = useDocStore((s) => s.commitNodeTransform);
   const setActiveSetCamera = useDocStore((s) => s.setActiveSetCamera);
+  const setSetCameraTracking = useDocStore((s) => s.setSetCameraTracking);
   const project = useDocStore((s) => s.project);
 
   const setField = (updates: Partial<SetNode>) => updateSetNode(sceneId, layerId, node.id, updates);
@@ -434,6 +435,7 @@ export function SetNodeInspector({
 
   const layer = project?.scenes.find((s) => s.id === sceneId)?.layers.find((l) => l.id === layerId);
   const activeCameraId = layer?.props.kind === "set3d" ? layer.props.activeCameraId : null;
+  const cameraTracking = layer?.props.kind === "set3d" ? layer.props.cameraTracking === true : false;
 
   return (
     <div className="h-full overflow-y-auto text-xs">
@@ -592,6 +594,29 @@ export function SetNodeInspector({
           >
             {activeCameraId === node.id ? "● PROGRAM CAMERA (click to release)" : "Set as program camera"}
           </button>
+
+          {/* Per-set, not per-camera-node: tracking replaces the camera
+              entirely rather than modifying one, so it belongs to the set.
+              While it is on, authored camera nodes and camera moves are
+              ignored for this layer — a move would fight the tracker and the
+              graphics would slide against the real picture. */}
+          <button
+            onClick={() => setSetCameraTracking(sceneId, layerId, !cameraTracking)}
+            className={`w-full rounded border px-2 py-1.5 font-mono text-[10px] ${
+              cameraTracking
+                ? "border-accent-blue text-accent-blue-bright"
+                : "border-border-subtle text-text-muted-alt hover:border-accent-blue"
+            }`}
+            title="Lock this set's render camera to the tracked studio camera (configure the FreeD listener in Settings)"
+          >
+            {cameraTracking ? "◉ TRACKED CAMERA (click to release)" : "Follow tracked camera (AR)"}
+          </button>
+          {cameraTracking && (
+            <div className="font-mono text-[9px] leading-relaxed text-text-muted">
+              Authored camera nodes and moves are ignored for this set while tracking is on. Start the FreeD
+              listener in Settings.
+            </div>
+          )}
         </Section>
       )}
 

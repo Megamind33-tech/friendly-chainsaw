@@ -1,4 +1,5 @@
 mod capture;
+mod freed;
 mod control_server;
 mod mos;
 mod ndi;
@@ -120,6 +121,8 @@ struct AppState {
     /// Tauri's internal app protocol, so packaged `/program` serves the same
     /// React bundle from the sidecar.
     frontend_roots: Vec<PathBuf>,
+    /// Live FreeD camera poses, forwarded to `/tracking/stream`.
+    tracking_broadcast: freed::FreedBroadcast,
 }
 
 /// A parsed `/document` envelope. Only `project` is read now that `/program`
@@ -272,6 +275,34 @@ async fn document_stream_handler(
     });
     let stream =
         tokio_stream::once(Ok::<Event, std::convert::Infallible>(Event::default().data(initial))).chain(updates);
+    (CORS_HEADERS, Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Live camera-tracking poses (see freed.rs).
+///
+/// SSE over the sidecar rather than a Tauri event, for the same reason the
+/// document uses it: the OBS Browser Source is not a Tauri window and has no
+/// IPC. One transport serves the Program window, the Preview window and OBS
+/// identically, so a tracked AR graphic cannot be locked to the camera in one
+/// and floating in another.
+///
+/// Unlike `/document/stream` there is deliberately no initial snapshot event:
+/// a pose is only meaningful as of the instant it was measured, and replaying
+/// a stale one to a late joiner would jump the camera to wherever it happened
+/// to be when that client connected.
+async fn tracking_stream_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> impl axum::response::IntoResponse {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::BroadcastStream;
+
+    let rx = state.tracking_broadcast.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|msg| {
+        // Lagged just means this client missed intermediate poses; the next
+        // one it receives is still the camera's current position.
+        msg.ok().map(|pose| Ok::<Event, std::convert::Infallible>(Event::default().data(pose)))
+    });
     (CORS_HEADERS, Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
@@ -883,6 +914,7 @@ fn spawn_output_server(
             .route("/program/tick", axum::routing::get(program_tick_handler))
             .route("/document", axum::routing::get(document_handler))
             .route("/document/stream", axum::routing::get(document_stream_handler))
+            .route("/tracking/stream", axum::routing::get(tracking_stream_handler))
             .route("/status", axum::routing::get(status_handler))
             .route(
                 "/assets",
@@ -1288,6 +1320,11 @@ fn grant_media_permissions(window: &tauri::WebviewWindow) {
 fn grant_media_permissions(_window: &tauri::WebviewWindow) {}
 
 pub fn run() {
+    let freed_state: freed::SharedFreedState = Arc::new(Mutex::new(freed::FreedState::default()));
+    // 256 poses of slack: a tracker runs at frame rate, so a client that
+    // stalls briefly resumes on the current pose instead of dropping the feed.
+    let freed_broadcast: freed::FreedBroadcast = Arc::new(tokio::sync::broadcast::channel(256).0);
+    let freed_task: freed::FreedTaskHandle = Arc::new(Mutex::new(None));
     let output_health: OutputHealthState = Arc::new(Mutex::new(OutputServerHealth {
         state: OutputServerState::Starting,
         addr: OUTPUT_SERVER_ADDR,
@@ -1352,6 +1389,9 @@ pub fn run() {
         // swaps it atomically.
         .manage::<mos::MosServerState>(std::sync::Arc::new(std::sync::Mutex::new(None)))
         .manage::<OutputHealthState>(output_health.clone())
+        .manage::<freed::SharedFreedState>(freed_state.clone())
+        .manage::<freed::FreedBroadcast>(freed_broadcast.clone())
+        .manage::<freed::FreedTaskHandle>(freed_task.clone())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1374,6 +1414,8 @@ pub fn run() {
             start_record,
             stop_record,
             get_output_server_health,
+            freed::get_freed_status,
+            freed::set_freed_config,
             spout::get_spout_status,
             rundowncloud::get_rundowncloud_status,
             rundowncloud::set_rundowncloud_config,
@@ -1430,6 +1472,7 @@ pub fn run() {
                     ndi: server_ndi.clone(),
                     assets_dir: assets_dir.clone(),
                     frontend_roots,
+                    tracking_broadcast: freed_broadcast.clone(),
                 },
                 control_server::ControlServerState {
                     state: server_control_state.clone(),
@@ -1443,6 +1486,14 @@ pub fn run() {
             // silently leaves it off — visible in the panel.
             let mos_state = app.state::<mos::MosServerState>().inner().clone();
             mos::maybe_start_mos_server(app.handle().clone(), &assets_dir, mos_state);
+            // Camera tracking: only starts listening if the persisted config
+            // says enabled, so an untracked studio never opens a UDP port.
+            freed::maybe_start_listener(
+                &assets_dir,
+                freed_state.clone(),
+                freed_broadcast.clone(),
+                freed_task.clone(),
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

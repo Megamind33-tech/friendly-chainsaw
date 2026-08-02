@@ -405,6 +405,8 @@ const layerPropsSchema = z.discriminatedUnion("kind", [
     nodes: z.array(setNodeSchema).default([]),
     environment: setEnvironmentSchema.default(() => defaultSetEnvironment()),
     activeCameraId: z.string().nullable().default(null),
+    /** Lock the render camera to the tracked studio camera (see freed.rs). */
+    cameraTracking: z.boolean().optional(),
     render: setRenderSettingsSchema.default(() => defaultSetRenderSettings()),
   }),
   z.object({ kind: z.literal("map") }),

@@ -1,5 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NdiToolsSettings } from "@/components/panels/NdiToolsSettings";
+import { CameraTrackingSettings } from "@/components/panels/CameraTrackingSettings";
 
 /**
  * App-wide Settings — new surface (none existed before). NDI Tools is the
@@ -14,8 +15,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         <DialogHeader>
           <DialogTitle className="font-mono text-sm text-text-muted-alt">Settings</DialogTitle>
         </DialogHeader>
-        <div className="max-h-[70vh] overflow-y-auto">
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
           <NdiToolsSettings />
+          <CameraTrackingSettings />
         </div>
       </DialogContent>
     </Dialog>

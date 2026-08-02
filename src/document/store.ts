@@ -208,6 +208,8 @@ interface Actions {
   setSetEnvironment: (sceneId: ID, layerId: ID, updates: Partial<SetEnvironment>) => void;
   setSetRenderSettings: (sceneId: ID, layerId: ID, updates: Partial<SetRenderSettings>) => void;
   setActiveSetCamera: (sceneId: ID, layerId: ID, cameraId: ID | null) => void;
+  /** Lock this set's render camera to the tracked studio camera (freed.rs). */
+  setSetCameraTracking: (sceneId: ID, layerId: ID, tracking: boolean) => void;
   addAsset: (asset: Asset) => void;
   updateAsset: (assetId: ID, updates: Partial<Asset>) => void;
   removeAsset: (assetId: ID) => void;
@@ -751,6 +753,19 @@ export const useDocStore = create<Store>()(
           const props = layer && set3dPropsOf(layer);
           if (!props) return;
           props.activeCameraId = cameraId;
+          state.dirty = true;
+        }),
+
+      setSetCameraTracking: (sceneId, layerId, tracking) =>
+        set((state) => {
+          if (!state.project) return;
+          const scene = findScene(state.project, sceneId);
+          const layer = scene && findLayer(scene, layerId);
+          const props = layer && set3dPropsOf(layer);
+          if (!props) return;
+          // Written as undefined rather than false when off, so a project that
+          // never touches tracking serialises byte-identically to before.
+          props.cameraTracking = tracking ? true : undefined;
           state.dirty = true;
         }),
 

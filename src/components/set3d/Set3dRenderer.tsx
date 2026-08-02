@@ -18,6 +18,7 @@ import {
 import { computeArHiddenSet, type ArFocus } from "@/document/arFocus";
 import { SetEnvironmentView, SetNodesView } from "./SetNodes";
 import { registerWebglContext } from "./webglContext";
+import { TrackedCameraRig } from "./TrackedCameraRig";
 import { SsrRealismEffect } from "./ssrEffect";
 
 /**
@@ -235,6 +236,8 @@ export function Set3dRenderer({
 }) {
   if (layer.props.kind !== "set3d") return null;
   const { nodes, environment, activeCameraId, render } = layer.props;
+  // Tracking outranks authored camera motion — see the rig comment below.
+  const tracked = layer.props.cameraTracking === true;
 
   const rehearsal = activeCameraOverride != null;
   const effectiveCameraId = rehearsal ? activeCameraOverride : activeCameraId;
@@ -279,8 +282,13 @@ export function Set3dRenderer({
         }}
       />
       {/* Rigs mount AFTER the node graph so their makeDefault wins while
-          active and unmounting restores the committed program camera. */}
-      {orbitLive ? (
+          active and unmounting restores the committed program camera.
+          Tracking outranks authored motion: when a physical camera is being
+          followed, an authored move would fight it and the graphics would
+          slide against the real picture. */}
+      {tracked ? (
+        <TrackedCameraRig />
+      ) : orbitLive ? (
         <CameraOrbitRig key={`orbit-${cameraOrbit!.startedAt}`} orbit={cameraOrbit!} />
       ) : moveLive ? (
         <CameraMoveRig key={`move-${cameraMove!.startedAt}`} move={cameraMove!} />

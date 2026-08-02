@@ -68,23 +68,29 @@ Different category. Listed to be explicit about the boundary rather than to impl
 | Genlock / house sync | 🔴 | ✅ | **Cannot slot into a genlocked plant** — hard ceiling |
 | LTC / VITC timecode | 🔴 | ✅ | Blocks frame-accurate playout |
 | SMPTE 2110 / SDI | ⬛ | ✅ | Category boundary |
-| Camera tracking (FreeD/Mo-Sys/Stype) | 🔴 | ✅ | **Blocks real AR** — see below |
+| Camera tracking (FreeD/Mo-Sys/Stype) | 🟡 FreeD D1 ingest ships; unproven vs hardware | ✅ | See below |
 | Lens distortion / calibration | 🔴 | ✅ | Blocks real AR |
 | Chroma keyer | ⬛ delegated to OBS/vMix | ✅ | Reasonable delegation |
 | Virtual set / 3D scenes | ✅ R3F + `sets/` | ✅ | Real, at web-engine fidelity |
-| AR graphics over live camera | 🟡 see below | ✅ | **Terminology risk** |
+| AR graphics over live camera | 🟡 tracked camera ships; no lens calibration | ✅ | See below |
 | Redundancy / engine failover | 🔴 | ✅ | Single point of failure |
 | Multi-engine sync | 🔴 | ✅ | Single engine |
 
-### The AR terminology gap — the most important line in this document
+### The AR gap — mostly closed
 
-The product describes itself as an AR engine (`Cargo.toml`: *"GFX + Virtual Set + AR"*), and `src/ar-system/`, `src/ar-engine/`, `docs/ar-*.md` are substantial, real work.
+**Previously:** *"The product describes itself as an AR engine … But 'AR' in broadcast means graphics locked to a physical camera's real-world position … None of that exists here."*
 
-But **"AR" in broadcast means graphics locked to a physical camera's real-world position**, which requires ingesting live camera tracking (FreeD, Mo-Sys StarTracker, Stype, ncam), applying the lens distortion model, and rendering to that moving frustum every frame. **None of that exists here.** There is no FreeD parser, no tracking protocol ingest, no lens calibration anywhere in `src-tauri/` or `src/ar-system/`.
+**FreeD camera tracking now ships.** `src-tauri/src/freed.rs` decodes the FreeD D1 datagram (the de-facto broadcast tracking format — Vinten's original, and what Mo-Sys StarTracker, Stype and Ncam emit), a UDP listener feeds poses onto the sidecar's `/tracking/stream`, and `TrackedCameraRig` locks the render camera to the tracked pose. Enabled per virtual-set layer, so a scene can hold a tracked AR set over a live camera *and* an untracked backplate — which is why the flag lives on the set, not globally.
 
-What exists is high-quality **3D graphics rendered to a virtual camera with authored moves** (`cameraMoves.ts`, `arMotionEngine`) — the same thing Vizrt calls a *virtual set* or *3D graphic*, not AR. A broadcast engineer reading "AR" will expect tracked camera support and find it absent.
+Transport is SSE over the sidecar, matching `/document/stream`, deliberately: the OBS Browser Source is not a Tauri window and has no IPC, so one transport serves the Program window, the Preview window and OBS identically. A graphic cannot be locked to the camera in one surface and floating in another.
 
-This is a naming/positioning gap, not a code defect, and it is cheap to close: either add a FreeD ingest path (R7 — FreeD is a small, well-documented UDP protocol, and a genuine differentiator at this tier), or say "3D virtual set graphics" and stop inviting the comparison. **Do one or the other before this reaches a customer conversation.**
+**What is still missing, and it matters:**
+
+1. **Never validated against real hardware.** The decoder is tested against its own builder — round-trip, sign extension, unit conversion, checksum, malformed-packet rejection — which proves internal consistency and *cannot* prove wire conformance with a physical tracker. The Settings panel therefore shows accepted/rejected packet counters: a rising reject count is the signal that the wire format does not match. This is the single acceptance criterion before it is trusted on air.
+2. **No lens calibration.** Zoom and focus arrive as raw encoder counts. Mapping them to a real focal length needs a per-lens calibration table; what ships is a linear encoder→FOV map an operator sets, labelled as such rather than pretending to be a lens file. Without real calibration, graphics will drift in scale through a zoom.
+3. **No lens distortion model.** Graphics are rendered to an ideal pinhole camera, so they will not match a wide lens's barrel distortion at the frame edges.
+
+So: the architecture is real and the protocol is implemented, but this is **tracked-camera AR without lens correction**, and it should be described that way. It is no longer accurate to say the product has no camera tracking; it is not yet accurate to claim parity with Tier-3 AR.
 
 ---
 
@@ -123,4 +129,4 @@ The changes that most improve competitive standing, in order:
 
 1. ~~**Transitions on Take**~~ — done (S1-8). Dissolve, dip-to-clear, four softened wipes and stingers all ship; this row is now at parity with the tier.
 2. **Feed authentication + push transport** — without headers the product cannot consume most commercial data feeds, which is the core promise of data-driven graphics. Now the single biggest functional gap.
-3. **FreeD camera-tracking ingest, or drop the AR claim** — currently the product invites a comparison it cannot win.
+3. ~~**FreeD camera-tracking ingest, or drop the AR claim**~~ — ingest ships. What remains is validating it against a real tracker and adding lens calibration; until then describe it as tracked-camera AR without lens correction.

@@ -597,6 +597,16 @@ export type LayerProps =
       /** Which camera node Program/Preview render through. `null` = the
        * default framing (no camera node authored yet). */
       activeCameraId: ID | null;
+      /**
+       * Lock this set's render camera to the physically tracked studio camera
+       * (see freed.rs / tracking.ts) instead of an authored camera node.
+       *
+       * Per-layer rather than global: a scene can legitimately hold a tracked
+       * AR set over a live camera AND an untracked virtual-set backplate, and
+       * applying tracking to both would swing the backplate around with the
+       * head. Optional so every existing project keeps its authored framing.
+       */
+      cameraTracking?: boolean;
       render: SetRenderSettings;
     }
   | { kind: "map" }
