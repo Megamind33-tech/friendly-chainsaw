@@ -4,7 +4,8 @@ import type { FeedId, SportId } from "@/document/dataSources";
 import { FORMATIONS } from "@/sports/squads";
 import { useDataPages } from "@/document/dataPages";
 import type { DataPage } from "@/document/dataPages";
-import { importCsvFile, parseCsvToValues, useExternalConnector } from "@/document/externalConnector";
+import { importCsvFile, parseCsvToValues } from "@/document/externalConnector";
+import { ConnectorsSection } from "./ConnectorsSection";
 import {
   dataHub,
   startElectionSimulator,
@@ -117,14 +118,6 @@ export function DataSourcesPanel() {
   const [simRunning, setSimRunning] = useState(isElectionSimulatorRunning);
   const electionJsonInput = useRef<HTMLInputElement>(null);
   const electionCsvInput = useRef<HTMLInputElement>(null);
-  const extEnabled = useExternalConnector((s) => s.enabled);
-  const extUrl = useExternalConnector((s) => s.apiUrl);
-  const extPoll = useExternalConnector((s) => s.pollIntervalSec);
-  const extLastSync = useExternalConnector((s) => s.lastSyncAt);
-  const extError = useExternalConnector((s) => s.lastError);
-  const setExtEnabled = useExternalConnector((s) => s.setEnabled);
-  const setExtUrl = useExternalConnector((s) => s.setApiUrl);
-  const setExtPoll = useExternalConnector((s) => s.setPollIntervalSec);
 
   useEffect(() => {
     if (!pagesLoaded) void loadPages();
@@ -426,32 +419,17 @@ export function DataSourcesPanel() {
         </div>
       </div>
 
+      <ConnectorsSection />
+
       <div>
-        <div className="mb-1 font-mono text-[10px] tracking-wide text-text-muted-alt">EXTERNAL DATA (API / EXCEL CSV)</div>
+        <div className="mb-1 font-mono text-[10px] tracking-wide text-text-muted-alt">FILE IMPORT (EXCEL CSV)</div>
         <div className="space-y-2 rounded border border-border-subtle bg-bg-panel p-2">
           <div className="font-mono text-[9px] text-text-muted">
-            Import a CSV exported from Excel (<code className="text-text-muted-alt">key,value</code> rows like <code className="text-text-muted-alt">squad.p8photo,https://…</code>) or poll a JSON API on an interval.
+            Import a CSV exported from Excel — <code className="text-text-muted-alt">key,value</code> rows like{" "}
+            <code className="text-text-muted-alt">squad.p8photo,https://…</code>, or a header row with one row of
+            values. For anything live, use a connector above.
           </div>
-          <Input
-            placeholder="https://api.example.com/roster.json"
-            value={extUrl}
-            onChange={(e) => setExtUrl(e.target.value)}
-            className="h-7 border-border-subtle bg-bg-surface font-mono text-[10px]"
-          />
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted-alt">
-              <input type="checkbox" checked={extEnabled} onChange={(e) => setExtEnabled(e.target.checked)} />
-              Poll API
-            </label>
-            <Input
-              type="number"
-              min={2}
-              value={extPoll}
-              onChange={(e) => setExtPoll(Number(e.target.value))}
-              className="h-7 w-16 border-border-subtle bg-bg-surface font-mono text-[10px]"
-              title="Poll interval (seconds)"
-            />
-            <span className="font-mono text-[9px] text-text-muted">sec</span>
             <button
               onClick={() => csvInput.current?.click()}
               className="flex items-center gap-1 rounded border border-border-subtle px-2 py-1 font-mono text-[9px] text-text-muted-alt hover:border-stripe-active"
@@ -473,10 +451,6 @@ export function DataSourcesPanel() {
               }}
             />
           </div>
-          {extLastSync && (
-            <div className="font-mono text-[9px] text-accent-blue-bright">API sync {new Date(extLastSync).toLocaleTimeString()}</div>
-          )}
-          {extError && <div className="font-mono text-[9px] text-live-red">{extError}</div>}
           {csvStatus && <div className="font-mono text-[9px] text-accent-blue-bright">{csvStatus}</div>}
         </div>
       </div>

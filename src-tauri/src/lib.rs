@@ -78,53 +78,12 @@ struct AppState {
     frontend_roots: Vec<PathBuf>,
 }
 
-#[allow(dead_code)]
-fn render_element_html(el: &serde_json::Value) -> String {
-    let visible = el.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
-    if !visible {
-        return String::new();
-    }
-    let kind = el.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-    let t = el.get("transform");
-    let x = t.and_then(|t| t.get("x")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let y = t.and_then(|t| t.get("y")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let w = t.and_then(|t| t.get("width")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let h = t.and_then(|t| t.get("height")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let rot = t.and_then(|t| t.get("rotation")).and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let opacity = el.get("opacity").and_then(|v| v.as_f64()).unwrap_or(1.0);
-
-    match kind {
-        "rect" => {
-            let fill = el.get("fill").and_then(|v| v.as_str()).unwrap_or("#cccccc");
-            let radius = el.get("cornerRadius").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            format!(
-                r#"<div class="el" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;transform:rotate({rot}deg);opacity:{opacity};background:{fill};border-radius:{radius}px;"></div>"#
-            )
-        }
-        "text" => {
-            let text = el.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let font_size = el.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(16.0);
-            let font_family = el.get("fontFamily").and_then(|v| v.as_str()).unwrap_or("sans-serif");
-            let fill = el.get("fill").and_then(|v| v.as_str()).unwrap_or("#ffffff");
-            let align = el.get("align").and_then(|v| v.as_str()).unwrap_or("left");
-            let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-            format!(
-                r#"<div class="el" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;transform:rotate({rot}deg);opacity:{opacity};color:{fill};font-family:'{font_family}',sans-serif;font-size:{font_size}px;text-align:{align};">{escaped}</div>"#
-            )
-        }
-        // image/group rendering lands with the asset pipeline / group
-        // support in a later phase — Phase 1's DoD only needs rect+text.
-        _ => String::new(),
-    }
-}
-
-/// A parsed `/document` envelope. `program_scene_id`/`preview_scene_id` are
-/// `None` for a stale, un-migrated bare-Project blob (Phase 1 shape) —
-/// callers fall back to `scenes[0]` in that case.
+/// A parsed `/document` envelope. Only `project` is read now that `/program`
+/// serves the real React bundle rather than a Rust-rendered snapshot; the
+/// envelope's scene ids are resolved in the frontend, which is the only place
+/// that knows how to render them.
 struct DocEnvelope {
     project: serde_json::Value,
-    #[allow(dead_code)]
-    program_scene_id: Option<String>,
 }
 
 fn parse_envelope(doc_json: &str) -> Option<DocEnvelope> {
@@ -133,88 +92,13 @@ fn parse_envelope(doc_json: &str) -> Option<DocEnvelope> {
         return None;
     }
     if let Some(project) = value.get("project") {
-        Some(DocEnvelope {
-            project: project.clone(),
-            program_scene_id: value.get("programSceneId").and_then(|v| v.as_str()).map(String::from),
-        })
+        Some(DocEnvelope { project: project.clone() })
     } else if value.get("scenes").is_some() {
         // Back-compat: Phase 1 pushed a bare Project, no envelope wrapper.
-        Some(DocEnvelope { project: value, program_scene_id: None })
+        Some(DocEnvelope { project: value })
     } else {
         None
     }
-}
-
-#[allow(dead_code)]
-fn select_scene<'a>(project: &'a serde_json::Value, scene_id: Option<&str>) -> Option<&'a serde_json::Value> {
-    let scenes = project.get("scenes")?.as_array()?;
-    if let Some(id) = scene_id {
-        if let Some(found) = scenes.iter().find(|s| s.get("id").and_then(|v| v.as_str()) == Some(id)) {
-            return Some(found);
-        }
-    }
-    scenes.first()
-}
-
-/// Server-side snapshot render of the program scene's visible gfx2d
-/// layers, driven entirely by the live document JSON. Deliberately not
-/// pixel-identical to the Konva renderer; it exists so OBS has something
-/// real to point at ahead of a proper video pipeline (Phase 8). Also
-/// injects a small same-origin heartbeat loop hitting `/program/tick` at
-/// the project's fps — this is the actual liveness signal, since OBS's
-/// Browser Source is a static CEF page load and never re-fetches
-/// `/program` on its own.
-#[allow(dead_code)]
-fn render_document_html(project: &serde_json::Value, scene_id: Option<&str>) -> String {
-    let fps = project.get("fps").and_then(|v| v.as_f64()).filter(|f| *f > 0.0).unwrap_or(30.0);
-    let interval_ms = 1000.0 / fps;
-
-    let mut body = String::new();
-    if let Some(scene) = select_scene(project, scene_id) {
-        if let Some(layers) = scene.get("layers").and_then(|l| l.as_array()) {
-            let mut sorted: Vec<&serde_json::Value> = layers.iter().collect();
-            sorted.sort_by_key(|l| l.get("zIndex").and_then(|z| z.as_i64()).unwrap_or(0));
-            for layer in sorted {
-                let visible = layer.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
-                let kind = layer.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-                if !visible || kind != "gfx2d" {
-                    continue;
-                }
-                let Some(elements) = layer
-                    .get("props")
-                    .and_then(|p| p.get("elements"))
-                    .and_then(|e| e.as_array())
-                else {
-                    continue;
-                };
-                for el in elements {
-                    body.push_str(&render_element_html(el));
-                }
-            }
-        }
-    }
-
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Program Output</title>
-<style>
-  html, body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; background: transparent; overflow: hidden; position: relative; }}
-  .el {{ position: absolute; box-sizing: border-box; }}
-</style>
-</head>
-<body>{body}<script>
-(function () {{
-  setInterval(function () {{
-    fetch('/program/tick').catch(function () {{}});
-  }}, {interval_ms});
-}})();
-</script></body>
-</html>
-"#
-    )
 }
 
 fn static_mime(file: &str) -> &'static str {

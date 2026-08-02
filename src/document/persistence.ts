@@ -15,7 +15,7 @@ import { formatBindingValue } from "@/ar-system/binding/format";
 import { assembleRenderEnvelope, type RenderEnvelope } from "./renderEnvelope";
 import { CURRENT_SCHEMA_VERSION, type Project, type ID, type SetNode } from "./types";
 import { compactProjectThumbnails } from "@/components/set3d/assetImport";
-import { loadExternalConnectorSettings } from "./externalConnector";
+import { loadConnectors } from "./connectors";
 import { useBroadcastStore } from "@/broadcast/broadcastStore";
 
 const AUTOSAVE_DEBOUNCE_MS = 700;
@@ -217,7 +217,7 @@ let initialized = false;
 let initPromise: Promise<void> | null = null;
 
 async function initPersistenceOnce(): Promise<void> {
-  await loadExternalConnectorSettings();
+  await loadConnectors();
   await useBroadcastStore.getState().loadSettings();
   const openProjectId = await getOpenProjectId();
 

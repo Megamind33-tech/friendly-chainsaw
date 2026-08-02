@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useDocStore, useDocStoreTemporal } from "@/document/store";
 import { initPersistence } from "@/document/persistence";
-import { useExternalDataPoller } from "@/document/useExternalDataPoller";
+import { ConnectorRuntimeHost } from "@/document/ConnectorRuntimeHost";
 import { useOutputStatus } from "@/output/useOutputStatus";
 import { initElectionFeed } from "@/ar-system/election/electionFeed";
 import { dataHub } from "@/ar-system/dataHub/dataHub";
@@ -53,7 +53,6 @@ export function PersistentShell() {
   const [dbStatus, setDbStatus] = useState<"loading" | "ok" | "error">("loading");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const status = useOutputStatus();
-  useExternalDataPoller();
 
   useEffect(() => {
     initPersistence()
@@ -162,6 +161,11 @@ export function PersistentShell() {
         </button>
       </div>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {/* Renders nothing — owns the live poll/SSE/WebSocket connections for
+          every configured data connector. Mounted here so connections follow
+          the app's lifetime, not any one panel's visibility: a feed must keep
+          flowing while the operator is on a different workspace. */}
+      <ConnectorRuntimeHost />
     </div>
   );
 }
