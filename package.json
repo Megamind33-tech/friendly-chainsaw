@@ -11,6 +11,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "verify:ar-builder": "bun run scripts/verify-ar-asset-builder.ts",
     "verify:ar-election": "bun run scripts/verify-ar-election-slice.ts",
     "verify:studio-realism": "bun run scripts/verify-studio-realism.ts"
@@ -91,8 +94,11 @@
     "@types/react-dom": "^19.1.6",
     "@types/three": "^0.185.0",
     "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^3",
+    "happy-dom": "^20.11.1",
     "playwright": "^1.61.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^3"
   }
 }

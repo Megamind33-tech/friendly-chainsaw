@@ -8,7 +8,7 @@ import { useRegisterFonts } from "@/document/fonts";
 import { renderElement } from "./renderNodes";
 import { Set3dRenderer } from "@/components/set3d/Set3dRenderer";
 
-interface DocumentRendererProps {
+export interface DocumentRendererProps {
   project: Project | null;
   sceneId?: string;
   width?: number;

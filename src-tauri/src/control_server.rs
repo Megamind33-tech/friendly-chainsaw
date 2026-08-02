@@ -227,7 +227,7 @@ async fn dispatch_rust_command(
 pub async fn control_state_stream_handler(
     State(state): State<ControlServerState>,
 ) -> impl IntoResponse {
-    let initial = state.state.lock().unwrap().clone();
+    let initial = crate::lock_recover(&state.state).clone();
     let rx = state.broadcast.subscribe();
     let updates = BroadcastStream::new(rx).filter_map(|msg| {
         msg.ok()

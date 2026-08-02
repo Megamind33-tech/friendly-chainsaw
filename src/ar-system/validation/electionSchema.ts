@@ -20,7 +20,14 @@ export const electionDataSchema = z.object({
   province: z.string().optional(),
   reportingPct: z.number().min(0).max(100),
   lastUpdated: z.string().optional(),
-  sourceStatus: z.enum(["live", "stale", "offline", "invalid"]).optional().default("live"),
+  // Never defaults to "live". A payload that does not assert its own liveness
+  // is "unknown" — an operator must be able to tell a real feed from sample or
+  // simulated data before it reaches Program. Defaulting to "live" made every
+  // sample/simulated/unattributed payload indistinguishable from a live one.
+  sourceStatus: z
+    .enum(["live", "simulated", "sample", "stale", "offline", "invalid", "unknown"])
+    .optional()
+    .default("unknown"),
   candidates: z.array(electionCandidateSchema).min(1).max(20),
 });
 
@@ -33,7 +40,7 @@ export function electionToFlatValues(data: ElectionData): Record<string, string>
     "election.title": data.title,
     "election.reporting": `${Math.round(data.reportingPct)}%`,
     "election.reportingPct": String(data.reportingPct),
-    "election.sourceStatus": data.sourceStatus ?? "live",
+    "election.sourceStatus": data.sourceStatus ?? "unknown",
     "election.lastUpdated": data.lastUpdated ?? new Date().toISOString(),
   };
   if (data.constituency) out["election.constituency"] = data.constituency;
@@ -115,12 +122,17 @@ export function feedValuesToElectionFlat(values: Record<string, string>): Record
   return out;
 }
 
+/**
+ * Demo/authoring payload. `sourceStatus` is "sample" and must stay that way:
+ * these vote totals are invented, and `initElectionFeed()` seeds them at app
+ * startup. Marked "live" they were indistinguishable from a real feed on air.
+ */
 export const ELECTION_SAMPLE_JSON: ElectionData = {
   title: "PRESIDENTIAL ELECTION 2026",
   constituency: "National",
   reportingPct: 67,
   lastUpdated: new Date().toISOString(),
-  sourceStatus: "live",
+  sourceStatus: "sample",
   candidates: [
     { name: "Candidate Alpha", party: "Party A", partyColor: "#1a4fa0", votes: 1245000, percentage: 52.3, rank: 1, leading: true, declared: false },
     { name: "Candidate Beta", party: "Party B", partyColor: "#c41e3a", votes: 1089000, percentage: 45.8, rank: 2, leading: false, declared: false },

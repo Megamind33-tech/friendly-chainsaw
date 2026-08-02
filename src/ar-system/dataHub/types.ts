@@ -1,4 +1,23 @@
-export type DataPacketStatus = "live" | "stale" | "offline" | "invalid";
+/**
+ * "live" is reserved for a source that has actually delivered a payload
+ * asserting its own liveness. "simulated"/"sample" mark generated or demo
+ * data, "unknown" an unattributed payload — all three must read differently
+ * from "live" anywhere an operator can see them, so fabricated numbers can
+ * never be mistaken for a real feed on air.
+ */
+export type DataPacketStatus =
+  | "live"
+  | "simulated"
+  | "sample"
+  | "stale"
+  | "offline"
+  | "invalid"
+  | "unknown";
+
+/** Statuses that represent genuinely live, trustworthy-on-air data. */
+export function isLiveStatus(status: DataPacketStatus): boolean {
+  return status === "live";
+}
 
 export interface ChaseDataPacket {
   sourceId: string;

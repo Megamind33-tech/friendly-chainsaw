@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Project, ID } from "./types";
 import type { LayerPlayback } from "./playbackState";
 import type { CameraMove, CameraOrbit } from "./cameraMoves";
+import type { SceneTransition } from "./sceneTransition";
 import type { ArFocus } from "./arFocus";
 import { parseRenderEnvelope } from "./renderEnvelope";
 
@@ -21,6 +22,9 @@ export interface DocumentEnvelope {
   cameraOrbits?: Record<ID, CameraOrbit>;
   cameraPreview?: Record<ID, ID>;
   arFocus?: Record<ID, ArFocus>;
+  /** In-flight Take transition (see sceneTransition.ts) — absent on older
+   * pushes, and absent whenever nothing is mixing. */
+  transition?: SceneTransition | null;
 }
 
 /**

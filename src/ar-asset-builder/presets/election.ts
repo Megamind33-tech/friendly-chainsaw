@@ -160,7 +160,9 @@ export const ELECTION_PRESETS: ArAssetPreset[] = [
     description: "Full-screen breaking result alert",
     create: () => createArBuilderAsset("Breaking Alert", "elections", "fullscreen-graphic", { width: 1920, height: 1080 }, {
       presetId: "election-breaking-alert",
-      bindings: [{ targetPath: "states.alert", source: "election.sourceStatus", fallback: "live" }],
+      // An unresolvable binding must not fall back to "live" — that made a
+      // broken/absent feed render as a live one on air.
+      bindings: [{ targetPath: "states.alert", source: "election.sourceStatus", fallback: "unknown" }],
     }),
   },
   {

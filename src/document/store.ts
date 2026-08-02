@@ -962,6 +962,7 @@ function syncDerivedStores(state: Store) {
     cameraOrbits: state.cameraOrbits,
     cameraPreview: state.cameraPreview,
     arFocus: state.arFocus,
+    transition: state.transition,
   });
 }
 

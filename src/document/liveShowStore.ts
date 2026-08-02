@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { CameraMove, CameraOrbit } from "./cameraMoves";
 import type { LayerPlayback } from "./playbackState";
+import type { SceneTransition } from "./sceneTransition";
 import type { ID } from "./types";
 
 /** Structural mirror avoids coupling the session store to AR command code. */
@@ -16,6 +17,9 @@ export interface LiveShowSnapshot {
   cameraOrbits: Record<ID, CameraOrbit>;
   cameraPreview: Record<ID, ID>;
   arFocus: Record<ID, ArFocusSnapshot>;
+  /** In-flight Take transition, mirrored so the embedded PGM multiviewer
+   * shows the same mix the Program window and OBS are showing. */
+  transition: SceneTransition | null;
 }
 
 interface LiveShowState extends LiveShowSnapshot {
@@ -36,5 +40,6 @@ export const useLiveShowStore = create<LiveShowState>((set) => ({
   cameraOrbits: {},
   cameraPreview: {},
   arFocus: {},
+  transition: null,
   replaceSnapshot: (snapshot) => set(snapshot),
 }));

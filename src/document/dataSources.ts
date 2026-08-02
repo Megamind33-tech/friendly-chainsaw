@@ -162,6 +162,11 @@ interface DataState {
    * payload, instead of one per field. Live REST/WS sports feeds depend on
    * this: 25 sequential setFeedValue calls = 25 full output bakes. */
   mergeFeedValues: (feed: FeedId, values: Record<string, string>) => void;
+  /** Same one-update guarantee as `mergeFeedValues`, across ALL source kinds
+   * (feeds, sports, mock/brand/ticker) in a SINGLE store write. The external
+   * REST/CSV connector merges a whole payload that can span several sources at
+   * once; doing that with per-key setters cost one full output bake per key. */
+  mergeSourceValues: (bySource: Record<string, Record<string, string>>) => void;
   setBrandValue: (key: string, value: string) => void;
   setTickerValue: (key: string, value: string) => void;
 }
@@ -242,6 +247,19 @@ export const useDataStore = create<DataState>((set) => ({
 
   mergeFeedValues: (feed, values) =>
     set((state) => ({ [feed]: { ...state[feed], values: { ...state[feed].values, ...values } } }) as Partial<DataState>),
+
+  mergeSourceValues: (bySource) =>
+    set((state) => {
+      const patch: Record<string, SportDataSource> = {};
+      for (const [sourceId, values] of Object.entries(bySource)) {
+        const existing = (state as unknown as Record<string, SportDataSource>)[sourceId];
+        // Unknown source ids are dropped rather than creating a phantom source
+        // the binding resolver would never read from.
+        if (!existing || typeof existing !== "object" || !("values" in existing)) continue;
+        patch[sourceId] = { ...existing, values: { ...existing.values, ...values } };
+      }
+      return patch as Partial<DataState>;
+    }),
 
   setBrandValue: (key, value) =>
     set((state) => ({ brand: { ...state.brand, values: { ...state.brand.values, [key]: value } } })),

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useDocStore } from "@/document/store";
 import { useLiveShowStore } from "@/document/liveShowStore";
-import { DocumentRenderer } from "@/components/gfx/DocumentRenderer";
+import { TransitionCompositor } from "@/components/gfx/TransitionCompositor";
 
 /** Fit-scales a project-resolution frame into whatever box it's given —
  * same math as the standalone ProgramView/PreviewView windows. */
@@ -31,6 +31,7 @@ function MonitorFrame({ label, tone, sceneId }: { label: string; tone: "program"
   const cameraOrbits = useLiveShowStore((s) => s.cameraOrbits);
   const cameraPreview = useLiveShowStore((s) => s.cameraPreview);
   const arFocus = useLiveShowStore((s) => s.arFocus);
+  const transition = useLiveShowStore((s) => s.transition);
   const projW = project?.resolution.width ?? 1920;
   const projH = project?.resolution.height ?? 1080;
   const { ref, scale } = useFitScale(projW, projH);
@@ -51,7 +52,7 @@ function MonitorFrame({ label, tone, sceneId }: { label: string; tone: "program"
           // its own real audio output. Making this embedded tile audible
           // too would double/echo any live source's audio when both are
           // open — this multiviewer is a visual monitor only.
-          <DocumentRenderer
+          <TransitionCompositor
             project={project}
             sceneId={sceneId}
             scale={scale}
@@ -63,6 +64,10 @@ function MonitorFrame({ label, tone, sceneId }: { label: string; tone: "program"
             cameraPreview={cameraPreview}
             arFocus={arFocus}
             role={tone}
+            // Only the PROGRAM tile mixes. The PVW tile shows the armed scene,
+            // which a take does not animate — it is already what Program has
+            // cut to.
+            {...(tone === "program" ? { transition } : {})}
           />
         ) : (
           <span className="font-mono text-[10px] text-text-muted">no {tone} scene armed</span>

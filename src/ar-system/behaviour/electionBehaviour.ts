@@ -4,6 +4,7 @@ export type ElectionBehaviourEvent =
   | { type: "leader-change"; from: string; to: string; at: number }
   | { type: "rank-change"; candidate: string; fromRank: number; toRank: number; at: number }
   | { type: "source-stale"; at: number }
+  | { type: "source-not-live"; status: ElectionData["sourceStatus"]; at: number }
   | { type: "source-invalid"; errors: string[]; at: number };
 
 interface RankSnapshot {
@@ -60,8 +61,14 @@ export function evaluateElectionBehaviours(data: ElectionData): ElectionBehaviou
   }
   lastRanks = sorted.map((c) => ({ name: c.name, rank: c.rank }));
 
-  if (data.sourceStatus === "stale") {
-    const ev: ElectionBehaviourEvent = { type: "source-stale", at: Date.now() };
+  // Anything that is not genuinely live is worth surfacing to the operator,
+  // not just "stale" — "simulated"/"sample"/"unknown" data reaching Program is
+  // exactly the case this event log exists to make visible.
+  if (data.sourceStatus !== "live") {
+    const ev: ElectionBehaviourEvent =
+      data.sourceStatus === "stale"
+        ? { type: "source-stale", at: Date.now() }
+        : { type: "source-not-live", status: data.sourceStatus, at: Date.now() };
     pushEvent(ev);
     fired.push(ev);
   }

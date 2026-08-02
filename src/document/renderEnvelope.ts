@@ -5,6 +5,7 @@ import { resolveElements } from "./bindings";
 import type { ArFocus } from "./arFocus";
 import type { CameraMove, CameraOrbit } from "./cameraMoves";
 import type { LayerPlayback, VerseDataHold } from "./playbackState";
+import type { SceneTransition } from "./sceneTransition";
 import { projectSchema } from "./schema";
 import type { ID, Project, SetNode } from "./types";
 
@@ -26,6 +27,10 @@ export interface RenderEnvelope {
   cameraOrbits: Record<ID, CameraOrbit>;
   cameraPreview: Record<ID, ID>;
   arFocus: Record<ID, ArFocus>;
+  /** In-flight scene transition on Take (see sceneTransition.ts). Optional so
+   * an older renderer, or one that never sees a take, is unaffected — adding
+   * a field is safe under the same envelope version. */
+  transition?: SceneTransition | null;
 }
 
 export interface AssembleRenderEnvelopeInput {
@@ -37,6 +42,7 @@ export interface AssembleRenderEnvelopeInput {
   cameraOrbits: Record<ID, CameraOrbit>;
   cameraPreview: Record<ID, ID>;
   arFocus: Record<ID, ArFocus>;
+  transition?: SceneTransition | null;
   dataValues: Record<string, string>;
   verseDataHold?: VerseDataHold | null;
   emittedAt?: number;
@@ -64,6 +70,18 @@ const cameraOrbitsSchema = z.record(z.string(), z.object({
   from: cameraPoseSchema,
   pivotStart: vec3Schema,
 }));
+const sceneTransitionSchema = z.object({
+  type: z.enum(["dissolve", "dipToClear", "wipeRight", "wipeLeft", "wipeDown", "wipeUp", "stinger"]),
+  fromSceneId: z.string(),
+  toSceneId: z.string(),
+  durationMs: z.number().finite(),
+  ease: z.string(),
+  startedAt: z.number().finite(),
+  fromLayerPlayback: layerPlaybackSchema,
+  softness: z.number().finite().optional(),
+  stingerAssetId: z.string().optional(),
+  cutAt: z.number().finite().optional(),
+});
 const arFocusSchema = z.record(z.string(), z.object({ nodeIds: z.array(z.string()), startedAt: z.number().finite() }));
 
 /** Runtime validation for documents received by a renderer or sidecar. */
@@ -78,6 +96,7 @@ export const renderEnvelopeSchema = z.object({
   cameraOrbits: cameraOrbitsSchema,
   cameraPreview: z.record(z.string(), z.string()),
   arFocus: arFocusSchema,
+  transition: sceneTransitionSchema.nullish(),
 });
 
 /** Parse without throwing so a renderer can keep its last known good frame. */
@@ -145,5 +164,6 @@ export function assembleRenderEnvelope(input: AssembleRenderEnvelopeInput): Rend
     cameraOrbits: input.cameraOrbits,
     cameraPreview: input.cameraPreview,
     arFocus: input.arFocus,
+    transition: input.transition ?? null,
   }) as RenderEnvelope;
 }
