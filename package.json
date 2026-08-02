@@ -13,6 +13,7 @@
     "tauri": "tauri",
     "check:windows": "cd src-tauri && cargo check --target x86_64-pc-windows-gnu",
     "doctor": "node scripts/doctor.mjs",
+    "bootstrap:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-windows.ps1",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

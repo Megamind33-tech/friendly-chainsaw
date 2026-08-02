@@ -58,6 +58,33 @@ Program therefore cannot drift — they run the identical `renderElement` builde
 | Rundown / playout | `src/document/playout.ts` |
 | Sidecar, NDI, record, MOS | `src-tauri/src/` |
 
+## Installing on Windows
+
+**If you only want to run the app, do not build it.** Download a prebuilt
+installer:
+
+1. Repo → **Actions** tab → **Windows installer** workflow
+2. **Run workflow** on `main` (or open the newest completed run)
+3. Download the **`broadcast-graphics-engine-windows`** artifact
+4. Unzip, run the `.exe` — the `.msi` is there too for managed deployment
+
+This needs no Rust, no Visual Studio Build Tools, no Node. WebView2 ships with
+Windows 11 and current Windows 10.
+
+> The builds are **unsigned** — no code-signing certificate is configured — so
+> SmartScreen warns on first run. Choose *More info* → *Run anyway*. Installs
+> per-machine, so Windows asks for administrator rights.
+
+To build from source on Windows instead, install the prerequisites in one go:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-windows.ps1
+```
+
+It installs Rust, VS Build Tools with the C++ workload, WebView2 and Bun via
+winget, skipping whatever is already there. Then open a **new** terminal (PATH
+changes don't reach the current one) and follow "Running it" below.
+
 ## Running it
 
 ```bash
@@ -65,6 +92,7 @@ bun install
 bun run doctor         # preflight — checks toolchain, ports, prerequisites
 bun run tauri dev      # full desktop app
 bun run dev            # Vite only (no Tauri shell)
+bun run tauri build    # produce installers into src-tauri/target/release/bundle
 ```
 
 **Run `bun run doctor` first.** `tauri dev` compiles the entire Rust dependency
