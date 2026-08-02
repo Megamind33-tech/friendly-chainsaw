@@ -1,19 +1,176 @@
-# Tauri + React + Typescript
+# Broadcast Graphics Engine
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A software-defined broadcast graphics engine: 2D graphics, virtual sets, 3D/AR
+scenes, a sports package, a rundown with MOS integration, and a control room —
+delivering to air as an OBS Browser Source or over NDI.
 
-## Fresh Windows Dev Run
+Tauri 2 desktop app. React 19 + Konva for 2D, React Three Fiber / three.js for
+3D, Rust for the output plane.
 
-Use `npm.cmd run dev:fresh` for verification runs that must start from a genuinely fresh Tauri/WebView2 process. It runs `scripts/kill-dev.ps1` first, then launches `bun.exe run tauri dev`.
+---
 
-If you prefer Bun directly from PowerShell, use `bun.exe run dev:fresh`. The explicit `.exe` avoids Windows execution-policy failures from the npm-installed `bun.ps1` shim.
+## What it is, precisely
 
-The cleanup script stops `broadcast-engine.exe`, Vite/Tauri listeners on the project dev ports, and app-scoped `msedgewebview2.exe` orphans. This matters on Windows because WebView2 renderer processes can outlive the Tauri host and keep stale page state alive.
+This renders broadcast graphics **in a web engine** and delivers them through a
+local HTTP sidecar. Its architectural peers are the browser-rendered graphics
+platforms (Singular.live, Flowics), not GPU compositing engines like Vizrt Viz
+Engine or Zero Density. See [`docs/GAP_ANALYSIS.md`](docs/GAP_ANALYSIS.md) for a
+feature-by-feature comparison and an honest statement of the ceilings that
+choice implies — no genlock, no timecode, no SDI, no camera tracking.
 
-CDP gotcha: the app's WebView2 debug port is fixed at `9222` in `src-tauri/tauri.conf.json`. If a stale renderer holds that port, a relaunch can look fresh while CDP attaches to the old page. After `npm.cmd run dev:fresh`, inspect CDP at `http://127.0.0.1:9222/json`; use `127.0.0.1`, not `localhost`, because the debug server binds IPv4.
+**On the word "AR":** what ships is high-quality 3D graphics rendered to a
+*virtual* camera with authored moves. Broadcast AR normally means graphics
+locked to a tracked *physical* camera (FreeD, Mo-Sys, Stype), and there is no
+tracking ingest here. Read `ar-` prefixed modules as "3D scene graphics".
 
-Use `npm.cmd run dev:clean` when you only want the cleanup step without relaunching.
+## Architecture
 
-## Recommended IDE Setup
+```
+Control Room (Tauri window)          Program / Preview (Tauri windows)
+  editor, panels, rundown              DocumentRenderer + Set3dRenderer
+  SQLite persistence                             ▲
+         │ set_program_document                  │ /document/stream (SSE)
+         ▼                                       │
+  ┌──────────────────────────────────────────────┴────────┐
+  │  axum sidecar — 127.0.0.1:4977  (src-tauri/src/lib.rs) │
+  │  /program  /document  /status  /assets  /control/*     │
+  └────────────────────────────────┬───────────────────────┘
+                                   │ same React bundle
+                                   ▼
+                        OBS Browser Source  →  air
+```
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+One serializable document is the source of truth. Editors mutate it; every
+renderer reads it. The Control Room pushes a **render envelope** (project +
+program/preview scene ids + transient show state) to the sidecar, which
+broadcasts it over SSE and serves the same React bundle to OBS. The editor and
+Program therefore cannot drift — they run the identical `renderElement` builder.
+
+| Concern | Where |
+|---|---|
+| Document model | `src/document/types.ts`, `schema.ts` |
+| Store (Zustand + zundo undo) | `src/document/store.ts` |
+| Output envelope | `src/document/renderEnvelope.ts` |
+| 2D render | `src/components/gfx/` |
+| 3D / virtual set / AR | `src/components/set3d/`, `src/ar-system/`, `src/ar-engine/` |
+| Take transitions | `src/document/sceneTransition.ts` |
+| Live data connectors | `src/document/connectors.ts` |
+| Rundown / playout | `src/document/playout.ts` |
+| Sidecar, NDI, record, MOS | `src-tauri/src/` |
+
+## Running it
+
+```bash
+bun install
+bun run tauri dev      # full desktop app
+bun run dev            # Vite only (no Tauri shell)
+```
+
+### Windows
+
+Use `npm.cmd run dev:fresh` for verification runs that must start from a
+genuinely fresh Tauri/WebView2 process. It runs `scripts/kill-dev.ps1` first,
+then launches `bun.exe run tauri dev`. From PowerShell, prefer `bun.exe` — the
+explicit `.exe` avoids execution-policy failures from the npm-installed
+`bun.ps1` shim.
+
+The cleanup script stops `broadcast-engine.exe`, Vite/Tauri listeners on the
+project dev ports, and app-scoped `msedgewebview2.exe` orphans. This matters
+because WebView2 renderer processes can outlive the Tauri host and keep stale
+page state alive. `npm.cmd run dev:clean` does the cleanup without relaunching.
+
+**CDP gotcha:** the WebView2 debug port is fixed at `9222` in
+`src-tauri/tauri.conf.json`. A stale renderer holding that port makes a relaunch
+*look* fresh while CDP attaches to the old page. Inspect
+`http://127.0.0.1:9222/json` — use `127.0.0.1`, not `localhost`, because the
+debug server binds IPv4.
+
+### Output to OBS
+
+Add a Browser Source pointed at `http://127.0.0.1:4977/program`, sized to the
+project resolution. The page renders with a transparent background, so it
+composites straight over your video bed.
+
+If the Control Room shows an **OUTPUT DOWN** banner, the sidecar could not claim
+port 4977 — almost always a previous `broadcast-engine.exe` that outlived its
+window. Hover the banner for the specific reason.
+
+## Testing
+
+```bash
+bun run test           # Vitest unit suite
+bun run test:watch
+bun run test:coverage
+bunx tsc --noEmit      # typecheck
+bun run build          # production build
+
+bun run scripts/verify-phase7.ts   # …through verify-phase10_2.ts
+cd src-tauri && cargo test --lib
+```
+
+Two layers, deliberately:
+
+- **Vitest** (`src/**/*.test.ts`) covers units — data sources, connectors,
+  binding resolution and formatting, the timeline engine, take transitions,
+  rundown timing.
+- **`scripts/verify-phase*.ts`** are phase-level acceptance suites. They are
+  real behavioural tests, not source greps, and CI runs both.
+
+CI additionally runs a `windows-latest` job, because the NDI FFI, WebView2
+capture and Spout code are all `#[cfg(windows)]` and cannot be compiled on the
+Linux jobs.
+
+The project's standing rule: **"it compiles" is never "it works."** Anything
+touching the output plane needs a check against a running app before it counts
+as done.
+
+## Data connectors
+
+Configure live feeds in **Data Sources → Live Data Connectors**. Each connector
+has its own transport (poll / SSE / WebSocket), credentials (bearer, custom
+header, query parameter, or basic), and target data source.
+
+Status is deliberately precise: only **Live** means a payload actually arrived
+and parsed. *Auth failed*, *Unreachable* and *Bad payload* are distinct states,
+because they call for completely different fixes.
+
+> **Credentials are stored unencrypted** in the local SQLite settings table,
+> alongside the project, like every other local setting. There is no OS keychain
+> integration. The file is user-scoped; treat it as you would any local config
+> holding an API key.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`docs/AUDIT-2026-08.md`](docs/AUDIT-2026-08.md) | Full system audit — findings, severities, what is fixed and what is not |
+| [`docs/GAP_ANALYSIS.md`](docs/GAP_ANALYSIS.md) | Competitive comparison by product tier |
+| [`docs/REMEDIATION_PLAN.md`](docs/REMEDIATION_PLAN.md) | Sequenced remaining work with acceptance criteria |
+| `PLAN.md` | Phase-by-phase build history and architectural decisions |
+| `docs/PHASE*_DESIGN.md` | Per-phase design rationale |
+
+`docs/ar-system-audit.md` is **superseded** by `docs/AUDIT-2026-08.md` and is
+retained only as a historical snapshot.
+
+## Known limitations
+
+Stated up front rather than discovered later. Full detail and severities in the
+audit.
+
+- **NDI output is video-only** and goes through a PNG encode/decode per frame,
+  which caps throughput below 1080p50.
+- **Spout / Syphon is a stub.** It reports unavailable honestly; it does not
+  share a GPU texture.
+- **No genlock, timecode, SDI or SMPTE 2110.** This cannot slot into a genlocked
+  plant.
+- **No camera tracking**, so no true broadcast AR — see above.
+- **Single Program output.** No multi-channel playout, no engine failover.
+- **MOS has not been proven against a real NRCS** (ENPS, iNEWS). The parser is
+  well tested against its own builders, which is not the same thing.
+- **Stinger transitions play muted** — there is no output audio path yet.
+
+## IDE setup
+
+[VS Code](https://code.visualstudio.com/) +
+[Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) +
+[rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).

@@ -1,3 +1,15 @@
+> **SUPERSEDED — historical snapshot only.**
+>
+> This document is dated 2026-07-09 (around Phase 5) and is materially wrong in
+> both directions against the current tree: it lists the OBS dev redirect as
+> BROKEN on a port that has since changed, and reports "no Data Hub, no property
+> registry, no behaviour engine" when all three now exist under
+> `src/ar-system/`. It reads as current and is not.
+>
+> Superseded by **[`AUDIT-2026-08.md`](AUDIT-2026-08.md)**, which re-derived
+> every claim from the code at Phase 10.2. Kept only so the phase history is
+> readable.
+
 # Chase AR System Audit
 
 **Date:** 2026-07-09  

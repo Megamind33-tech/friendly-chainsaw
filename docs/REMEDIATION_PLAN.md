@@ -25,8 +25,10 @@ Implemented, typechecked, built, and pinned with tests on `claude/software-audit
 | **S2-12** | Output-plane failure recorded as health state and shown as an OUTPUT DOWN banner; no panic in a detached task | `cargo check --tests`; **live check required**, see R0 |
 | **S2-16** | CORS narrowed from `*` to the app's own origins | 5 Rust origin tests incl. substring-bypass cases |
 | **S2-13** | Vendor chunks split so app updates do not re-download 2.8 MB; original diagnosis corrected | `bun run build`, measured chunk table in the audit |
+| **R5 (part)** | Coverage for binding resolution + formatting, the timeline engine, and rundown timing/export — plus a real `{value:,}` bug it exposed | `format.test.ts`, `bindings.test.ts`, `timelineEngine.test.ts`, `playout.test.ts` — 94 tests |
+| **S3-15** | README rewritten; stale audit marked superseded; `spout.rs` deferral note corrected | Reads true against the current tree |
 
-**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 100/100.
+**Baseline after changes:** `tsc --noEmit` clean · `bun run build` passes · 6/6 `verify-phaseN` suites pass · `cargo check --tests` passes · `cargo test --lib` 41/41 · `vitest run` 194/194.
 
 ---
 
@@ -138,12 +140,12 @@ The rAF heartbeat proves the Program page is presenting. It does not prove a con
 
 65 tests against 45,371 lines is still a seed. Priority order — highest on-air consequence first:
 
-1. **Binding resolution + format/fallback** — decides literal on-air text; S0-2(d) lived here.
-2. ~~**`programState` take/cut/arm**~~ — covered by `programState.test.ts` (R2).
-3. **`timelineEngine`** — playback gating decides whether a layer is visible on air at all.
-4. **`playout.ts`** (765 lines) — rundown timing, `next`/`previous`, schedule.
+1. ~~**Binding resolution + format/fallback**~~ — done; found and fixed a real `{value:,}` defect.
+2. ~~**`programState` take/cut/arm**~~ — done (R2).
+3. ~~**`timelineEngine`**~~ — done.
+4. ~~**`playout.ts`** rundown timing and import/export~~ — done. The *store* (take/next/schedule ticking) is still uncovered.
 5. **`automation.ts`** — already well covered by `verify-phase10_2.ts`; port to Vitest for watch/coverage.
-6. **`persistence.ts`** — document round-trip and schema up-migration; corruption here loses a show's work.
+6. **`persistence.ts`** — document round-trip and schema up-migration; corruption here loses a show's work. **Highest remaining priority.**
 7. **`connectors.ts` transports** — the pure helpers are covered; the poll/SSE/WebSocket runtime in `ConnectorRuntimeHost.tsx` is not, and needs a fake transport to test the reconnect and status paths.
 
 **Acceptance:** every S0/S1 fix stays pinned; `test:coverage` reports ≥60% on `src/document/` and `src/ar-system/`.
@@ -202,23 +204,46 @@ payload actually arrived and parsed. Legacy settings migrate on first load.
 
 ---
 
-## R9 — Documentation truth pass · S3-15 · effort: 0.5 day
+## R9 — Documentation truth pass · S3-15 · **DONE**
 
-- Header on `docs/ar-system-audit.md`: superseded by `AUDIT-2026-08.md`, with its two now-wrong claims corrected (dev redirect port; Data Hub / property registry / behaviour engine all exist).
-- Real `README.md`: what the product is, architecture, how to run, how to test. It is currently still the Tauri template.
-- Update `spout.rs`'s "deferred to Phase 8" note to reflect actual status.
-- Delete `render_document_html` / `render_element_html` / `select_scene` (S2-14) — git history retains them, and their comments actively describe a superseded liveness mechanism.
+README rewritten from the Tauri template into a real one (architecture, module
+map, run/test/OBS instructions, credential-storage caveat, and an up-front
+Known Limitations list). `docs/ar-system-audit.md` carries a SUPERSEDED banner
+naming both directions it is wrong in. `spout.rs` no longer claims deferral to
+a phase that shipped long ago. The dead Rust HTML renderer was deleted under
+S2-14.
+
+**Not done:** `PLAN.md` (147 KB) still mixes durable architecture decisions with
+session-scoped environment notes. Splitting it is a judgement call about what
+the team wants as history versus reference, so it was left rather than
+reorganised unilaterally.
 
 ---
 
-## Suggested sequence
+## What is left
 
-| Order | Items | Rationale |
-|---|---|---|
-| 1 | **R0** | Confirm the S0 fixes on real hardware before anything builds on them |
-| 2 | **R1** | 1 hour; stops the largest class of untested regression permanently |
-| 3 | **R2** | Most visible functional gap; unblocks a credible demo |
-| 4 | **R3**, **R9** | Cheap, reduce operator-facing risk and reader confusion |
-| 5 | **R8**, **R6** | Make data ingest genuinely usable; make Program start fast |
-| 6 | **R7** | Positioning decision — needs a product call, not just engineering |
-| 7 | **R4**, **R5** | Ongoing depth |
+Everything fixable from a Linux container without a real machine has been done.
+What remains splits cleanly into three kinds of work.
+
+### Blocked on real hardware — do these first
+
+| | |
+|---|---|
+| **R0** | Live-verify every S0/S1/S2 fix on Windows with OBS attached. Nothing else should be trusted on air until this passes. |
+| **R1** | Confirm the new `windows-latest` CI job runs green. If `cargo check --tests` fails there, that failure *is* the finding S1-7 predicted. |
+| **R6** | Measure renderer cold start before deciding whether to lazy-load the 1.58 MB 3D stack. The measurement is the deliverable, not the optimisation. |
+
+### Needs a product decision, not engineering
+
+| | |
+|---|---|
+| **R7** | Add FreeD camera-tracking ingest, or stop calling it AR. Currently the product invites a comparison it cannot win. One is three days, the other is an hour. |
+
+### Ordinary remaining engineering
+
+| | |
+|---|---|
+| **R5** | Coverage: `persistence.ts` round-trip and schema migration is the highest-value gap left — corruption there loses a show's work. Then the playout store, then porting `automation.ts` onto Vitest. |
+| **R4** | End-to-end liveness: reflect real NDI sent-frame counts, not just page liveness. |
+| **S1-9 / S2-10** | The NDI PNG-per-frame ceiling, and the Spout stub that is its standard remedy. These are one piece of work, and both need Windows to develop against. |
+| **S2-11** | Output audio path. Unblocks stinger audio, which currently plays muted. |
